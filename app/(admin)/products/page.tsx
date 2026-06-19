@@ -8,6 +8,8 @@ import {
   Button,
   Space,
   Input,
+  Select,
+  Tag,
   Modal,
   Form,
   Popconfirm,
@@ -35,10 +37,20 @@ interface Product {
   name: string;
   price: number;
   imageUrl: string;
+  categoryId: number | null;
+  categoryName: string | null;
+  spec: string | null;
+  description: string | null;
+}
+
+interface Category {
+  id: number;
+  name: string;
 }
 
 export default function ProductsPage() {
   const [data, setData] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -65,15 +77,33 @@ export default function ProductsPage() {
     }
   }, [messageApi]);
 
+  const fetchCategories = useCallback(async () => {
+    try {
+      const res = await fetch("/api/categories");
+      if (!res.ok) throw new Error("Failed to fetch");
+      const cats: Category[] = await res.json();
+      setCategories(cats);
+    } catch {
+      messageApi.error("讀取分類資料失敗");
+    }
+  }, [messageApi]);
+
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+    fetchCategories();
+  }, [fetchData, fetchCategories]);
 
   useEffect(() => {
     if (!modalOpen) return;
 
     if (editing) {
-      form.setFieldsValue({ name: editing.name, price: editing.price });
+      form.setFieldsValue({
+        name: editing.name,
+        price: editing.price,
+        categoryId: editing.categoryId ?? undefined,
+        spec: editing.spec ?? undefined,
+        description: editing.description ?? undefined,
+      });
     } else {
       form.resetFields();
     }
@@ -141,7 +171,13 @@ export default function ProductsPage() {
   const handleSave = async () => {
     if (uploading) return;
 
-    let values: { name: string; price: string };
+    let values: {
+      name: string;
+      price: string;
+      categoryId: number;
+      spec?: string;
+      description?: string;
+    };
     try {
       values = await form.validateFields();
     } catch {
@@ -166,9 +202,15 @@ export default function ProductsPage() {
             price: priceNum,
             imageUrl: currentImageUrl,
             oldImageUrl: editing.imageUrl,
+            categoryId: values.categoryId,
+            spec: values.spec,
+            description: values.description,
           }),
         });
-        if (!res.ok) throw new Error("Update failed");
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error || "更新失敗");
+        }
         messageApi.success("商品已更新");
       } else {
         const res = await fetch("/api/products", {
@@ -178,17 +220,25 @@ export default function ProductsPage() {
             name: values.name,
             price: priceNum,
             imageUrl: currentImageUrl,
+            categoryId: values.categoryId,
+            spec: values.spec,
+            description: values.description,
           }),
         });
-        if (!res.ok) throw new Error("Create failed");
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error || "新增失敗");
+        }
         messageApi.success("商品已新增");
       }
 
       uploadedImageUrlsRef.current = [];
       closeModal();
       await fetchData();
-    } catch {
-      messageApi.error(editing ? "更新失敗" : "新增失敗");
+    } catch (e) {
+      messageApi.error(
+        e instanceof Error ? e.message : editing ? "更新失敗" : "新增失敗",
+      );
     } finally {
       setSaving(false);
     }
@@ -219,11 +269,14 @@ export default function ProductsPage() {
       const res = await fetch(`/api/products/${id}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error("Delete failed");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || "刪除失敗");
+      }
       messageApi.success("商品已刪除");
       await fetchData();
-    } catch {
-      messageApi.error("刪除失敗");
+    } catch (e) {
+      messageApi.error(e instanceof Error ? e.message : "刪除失敗");
     } finally {
       setSaving(false);
     }
@@ -270,6 +323,22 @@ export default function ProductsPage() {
           <Text strong>{name}</Text>
         </Space>
       ),
+    },
+    {
+      title: "分類",
+      dataIndex: "categoryName",
+      key: "categoryName",
+      width: 120,
+      render: (categoryName: string | null) =>
+        categoryName ? <Tag color="blue">{categoryName}</Tag> : <Text type="secondary">—</Text>,
+    },
+    {
+      title: "規格",
+      dataIndex: "spec",
+      key: "spec",
+      width: 120,
+      render: (spec: string | null) =>
+        spec ? <Text>{spec}</Text> : <Text type="secondary">—</Text>,
     },
     {
       title: "價格",
@@ -387,6 +456,19 @@ export default function ProductsPage() {
           </Form.Item>
 
           <Form.Item
+            name="categoryId"
+            label="分類"
+            rules={[{ required: true, message: "請選擇分類" }]}
+          >
+            <Select
+              showSearch
+              placeholder="請選擇分類"
+              optionFilterProp="label"
+              options={categories.map((c) => ({ label: c.name, value: c.id }))}
+            />
+          </Form.Item>
+
+          <Form.Item
             name="price"
             label="價格"
             rules={[
@@ -395,6 +477,14 @@ export default function ProductsPage() {
             ]}
           >
             <Input placeholder="例：50" />
+          </Form.Item>
+
+          <Form.Item name="spec" label="規格">
+            <Input placeholder="例：500g/包" />
+          </Form.Item>
+
+          <Form.Item name="description" label="說明">
+            <Input.TextArea rows={3} placeholder="商品說明（選填）" />
           </Form.Item>
 
           <Form.Item

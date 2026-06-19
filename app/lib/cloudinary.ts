@@ -15,7 +15,17 @@ export function extractPublicId(url: string): string | null {
 
 export async function deleteCloudinaryImage(url: string): Promise<void> {
   const publicId = extractPublicId(url);
-  if (publicId) {
-    await cloudinary.uploader.destroy(publicId);
+  if (!publicId) {
+    console.warn(`[cloudinary] 無法從網址解析 public ID，略過刪除：${url}`);
+    return;
+  }
+
+  const { result } = await cloudinary.uploader.destroy(publicId);
+  // result 可能為 "ok" / "not found"；後者代表圖片已不存在或 public ID 有誤
+  if (result !== "ok" && result !== "not found") {
+    throw new Error(`Cloudinary 刪除失敗（${publicId}）：${result}`);
+  }
+  if (result === "not found") {
+    console.warn(`[cloudinary] 找不到要刪除的圖片：${publicId}`);
   }
 }

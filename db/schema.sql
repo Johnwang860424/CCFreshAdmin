@@ -1,10 +1,18 @@
 -- 於 Neon SQL Editor 執行一次以建立資料表。
 
+CREATE TABLE categories (
+  id    SERIAL PRIMARY KEY,
+  name  TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE products (
-  id         SERIAL PRIMARY KEY,
-  name       TEXT NOT NULL UNIQUE,
-  price      INTEGER NOT NULL,
-  image_url  TEXT NOT NULL
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  price       INTEGER NOT NULL,
+  image_url   TEXT NOT NULL,
+  category_id INTEGER REFERENCES categories(id) ON DELETE RESTRICT,
+  spec        TEXT,
+  description TEXT
 );
 
 CREATE TABLE pickup_spots (

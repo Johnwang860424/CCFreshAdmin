@@ -1,24 +1,31 @@
 import { NextResponse } from "next/server";
 import {
   deleteProduct,
-  getProducts,
+  getProductImageUrl,
   updateProductDetails,
 } from "@/app/lib/products";
 import { deleteCloudinaryImage } from "@/app/lib/cloudinary";
 import { revalidateCache } from "@/app/lib/revalidate";
+import { MAX_LEN, parseId } from "@/app/lib/validation";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function PUT(request: Request, { params }: Params) {
   try {
     const { id: idStr } = await params;
-    const id = Number(idStr);
+    const parsed = parseId(idStr);
+    if ("error" in parsed) return parsed.error;
+    const { id } = parsed;
     const body = await request.json();
-    const { price, imageUrl, oldImageUrl } = body as {
-      price: number | string;
-      imageUrl: string;
-      oldImageUrl?: string;
-    };
+    const { price, imageUrl, oldImageUrl, categoryId, spec, description } =
+      body as {
+        price: number | string;
+        imageUrl: string;
+        oldImageUrl?: string;
+        categoryId: number | string;
+        spec?: string;
+        description?: string;
+      };
 
     const priceNum = Number(price);
     if (
@@ -33,7 +40,35 @@ export async function PUT(request: Request, { params }: Params) {
       );
     }
 
-    await updateProductDetails(id, priceNum, imageUrl);
+    if (spec && spec.length > MAX_LEN.spec) {
+      return NextResponse.json(
+        { error: `規格不可超過 ${MAX_LEN.spec} 字` },
+        { status: 400 },
+      );
+    }
+    if (description && description.length > MAX_LEN.description) {
+      return NextResponse.json(
+        { error: `說明不可超過 ${MAX_LEN.description} 字` },
+        { status: 400 },
+      );
+    }
+
+    const categoryNum = Number(categoryId);
+    if (!Number.isInteger(categoryNum) || categoryNum <= 0) {
+      return NextResponse.json({ error: "請選擇分類" }, { status: 400 });
+    }
+
+    const specVal = spec?.trim() || null;
+    const descriptionVal = description?.trim() || null;
+
+    await updateProductDetails(
+      id,
+      priceNum,
+      imageUrl,
+      categoryNum,
+      specVal,
+      descriptionVal,
+    );
 
     if (oldImageUrl && oldImageUrl !== imageUrl) {
       await deleteCloudinaryImage(oldImageUrl);
@@ -50,15 +85,18 @@ export async function PUT(request: Request, { params }: Params) {
 export async function DELETE(_request: Request, { params }: Params) {
   try {
     const { id: idStr } = await params;
-    const id = Number(idStr);
+    const parsed = parseId(idStr);
+    if ("error" in parsed) return parsed.error;
+    const { id } = parsed;
 
-    const products = await getProducts();
-    const product = products.find((p) => p.id === id);
+    // 刪除前直接查最新的 image_url，避免用到過時的快取資料
+    const imageUrl = await getProductImageUrl(id);
 
     await deleteProduct(id);
 
-    if (product?.imageUrl) {
-      await deleteCloudinaryImage(product.imageUrl);
+    // DB 記錄刪除成功後才清理 Cloudinary 圖片
+    if (imageUrl) {
+      await deleteCloudinaryImage(imageUrl);
     }
 
     await revalidateCache("products");

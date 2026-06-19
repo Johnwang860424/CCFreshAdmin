@@ -10,6 +10,7 @@ import {
   UserOutlined,
   ShoppingCartOutlined,
   EnvironmentOutlined,
+  AppstoreOutlined,
 } from "@ant-design/icons";
 
 const { Sider, Header, Content } = Layout;
@@ -17,6 +18,7 @@ const { Text } = Typography;
 
 const menuItems = [
   { key: "/pickup-spots", icon: <EnvironmentOutlined />, label: "自取點管理" },
+  { key: "/categories", icon: <AppstoreOutlined />, label: "分類管理" },
   { key: "/products", icon: <ShopOutlined />, label: "商品管理" },
   { key: "/orders", icon: <ShoppingCartOutlined />, label: "訂單管理" },
 ];
