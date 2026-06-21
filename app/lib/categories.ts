@@ -1,6 +1,12 @@
 import { unstable_cache } from "next/cache";
 import { sql } from "@/app/lib/db";
 
+interface CategoryDbRow {
+  id: number;
+  name: string;
+  product_count: number;
+}
+
 export interface CategoryRow {
   id: number;
   name: string;
@@ -9,16 +15,16 @@ export interface CategoryRow {
 
 export const getCategories = unstable_cache(
   async (): Promise<CategoryRow[]> => {
-    const rows = await sql`
+    const rows = (await sql`
       SELECT c.id, c.name, COUNT(p.id) AS product_count
       FROM categories c
       LEFT JOIN products p ON p.category_id = c.id
       GROUP BY c.id, c.name
       ORDER BY c.id
-    `;
+    `) as CategoryDbRow[];
     return rows.map((r) => ({
-      id: r.id as number,
-      name: r.name as string,
+      id: r.id,
+      name: r.name,
       productCount: Number(r.product_count),
     }));
   },

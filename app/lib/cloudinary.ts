@@ -21,7 +21,6 @@ export async function deleteCloudinaryImage(url: string): Promise<void> {
   }
 
   const { result } = await cloudinary.uploader.destroy(publicId);
-  // result 可能為 "ok" / "not found"；後者代表圖片已不存在或 public ID 有誤
   if (result !== "ok" && result !== "not found") {
     throw new Error(`Cloudinary 刪除失敗（${publicId}）：${result}`);
   }

@@ -15,7 +15,8 @@ export async function revalidateCache(tag: string) {
       },
       body: JSON.stringify({ tag }),
     });
-  } catch {
-    // 前端暫時無法連線，不阻斷主流程
+  } catch (err) {
+    // 前台重新驗證為 best-effort：失敗不應阻斷後台寫入，但仍記錄以利排查。
+    console.warn(`[revalidate] 通知前台失敗（tag=${tag}）：`, err);
   }
 }

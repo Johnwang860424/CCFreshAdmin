@@ -12,6 +12,7 @@ export default async function AdminLayout({
     <AdminShell
       userName={session?.user?.name}
       userEmail={session?.user?.email}
+      userImage={session?.user?.image}
     >
       {children}
     </AdminShell>

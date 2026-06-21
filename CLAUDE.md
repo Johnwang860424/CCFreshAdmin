@@ -44,7 +44,7 @@ Schema lives in `db/schema.sql` (run once against Neon). Tables: `products`, `pi
 
 - **Identity is the serial `id`** column (the API route segment is `[id]`, antd table `rowKey="id"`). Data modules return `id`, not a row index.
 - `products.price` is `INTEGER` (NT$ whole dollars). API routes coerce/validate (`Number.isInteger`, non-negative); the product form additionally enforces an integer pattern. Data modules pass/return `price` as `number`.
-- `orders` / `order_items` exist in the schema but are **not yet wired to any UI/API** — orders are written by an external customer-facing app (out of this repo's scope). Order rows snapshot `product_name` / `unit_price` / `pickup_label` / `total` so historical orders survive later product/pickup-spot edits; product & pickup-spot FKs use `ON DELETE SET NULL`, `order_items → orders` uses `ON DELETE CASCADE`.
+- `orders` / `order_items` are **written by an external customer-facing app** (out of this repo's scope); this admin only reads, exports (結單 CSV), and clears them (`orders/page.tsx`, `order-summary/page.tsx`, `app/api/orders/*`). Order/item rows snapshot `product_name` / `unit_price` / `promo_*` / `subtotal` so historical orders survive later product/pickup-spot edits. FKs: `order_items.product_id` is `ON DELETE SET NULL`; `products.category_id` and `orders.pickup_spot_id` are `ON DELETE RESTRICT` (a category/pickup-spot still referenced cannot be deleted — enforced in the data layer / DB); `order_items → orders` is `ON DELETE CASCADE`.
 
 `app/lib/cloudinary.ts` handles image upload/delete; uploads go to the `CC` folder. `deleteCloudinaryImage` parses the public ID back out of a secure URL — keep image URLs in Cloudinary's standard `/upload/...` form or that regex breaks.
 
@@ -57,7 +57,7 @@ Image cleanup is coordinated to avoid orphans:
 - Product delete fetches the row first to recover its `imageUrl`, then deletes the Cloudinary image after the sheet row.
 - Client (`products/page.tsx`) tracks images uploaded during a modal session in `uploadedImageUrlsRef` and deletes them on cancel, so abandoned uploads don't leak.
 
-Upload validation lives server-side in `app/api/upload/route.ts`: JPG/PNG/WebP/GIF only, 5 MB max.
+Upload validation lives server-side in `app/api/upload/route.ts`: JPG/PNG/WebP only (validated by magic bytes, not just Content-Type), 5 MB max.
 
 ## Environment variables
 

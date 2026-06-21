@@ -11,6 +11,7 @@ import {
   ShoppingCartOutlined,
   EnvironmentOutlined,
   AppstoreOutlined,
+  BarChartOutlined,
 } from "@ant-design/icons";
 
 const { Sider, Header, Content } = Layout;
@@ -20,16 +21,19 @@ const menuItems = [
   { key: "/pickup-spots", icon: <EnvironmentOutlined />, label: "自取點管理" },
   { key: "/categories", icon: <AppstoreOutlined />, label: "分類管理" },
   { key: "/products", icon: <ShopOutlined />, label: "商品管理" },
+  { key: "/order-summary", icon: <BarChartOutlined />, label: "縣市訂單統計" },
   { key: "/orders", icon: <ShoppingCartOutlined />, label: "訂單管理" },
 ];
 
 export function AdminShell({
   userName,
   userEmail,
+  userImage,
   children,
 }: {
   userName?: string | null;
   userEmail?: string | null;
+  userImage?: string | null;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -103,7 +107,7 @@ export function AdminShell({
         >
           <Space size={16}>
             <Space size={8}>
-              <Avatar size="small" icon={<UserOutlined />} />
+              <Avatar size="small" src={userImage} icon={!userImage ? <UserOutlined /> : undefined} />
               <Text type="secondary">{userName ?? userEmail}</Text>
             </Space>
             <Button

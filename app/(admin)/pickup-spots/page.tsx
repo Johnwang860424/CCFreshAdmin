@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Card,
-  Typography,
   Table,
   Button,
   Space,
@@ -14,6 +13,7 @@ import {
   Popconfirm,
   message,
   Spin,
+  Typography,
 } from "antd";
 import {
   PlusOutlined,
@@ -23,15 +23,12 @@ import {
   EnvironmentOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import { TAIWAN_LOCATIONS, type TaiwanCity } from "@/app/lib/taiwan-locations";
+import { TAIWAN_LOCATIONS } from "@/app/lib/taiwan-locations";
+import type { PickupSpotRow as PickupSpot } from "@/app/lib/pickup-spots";
+import { fetchJson, postJson, deleteJson } from "@/app/lib/api-client";
+import { PageHeader } from "@/app/components/page-header";
 
-const { Title, Text } = Typography;
-
-interface PickupSpot {
-  id: number;
-  city: string;
-  township: string;
-}
+const { Text } = Typography;
 
 export default function PickupSpotsPage() {
   const [data, setData] = useState<PickupSpot[]>([]);
@@ -40,26 +37,16 @@ export default function PickupSpotsPage() {
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
-  const selectedCity = Form.useWatch<TaiwanCity | undefined>("city", form);
   const [messageApi, contextHolder] = message.useMessage();
-  const cityOptions = Object.keys(TAIWAN_LOCATIONS).map((city) => ({
+  const cityOptions = TAIWAN_LOCATIONS.map((city) => ({
     label: city,
     value: city,
   }));
-  const townshipOptions = selectedCity
-    ? TAIWAN_LOCATIONS[selectedCity].map((township) => ({
-        label: township,
-        value: township,
-      }))
-    : [];
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/pickup-spots");
-      if (!res.ok) throw new Error("Failed to fetch");
-      const spots: PickupSpot[] = await res.json();
-      setData(spots);
+      setData(await fetchJson<PickupSpot[]>("/api/pickup-spots"));
     } catch {
       messageApi.error("讀取自取地點資料失敗");
     } finally {
@@ -72,8 +59,7 @@ export default function PickupSpotsPage() {
   }, [fetchData]);
 
   const filtered = data.filter(
-    (item) =>
-      item.city.includes(search) || item.township.includes(search)
+    (item) => item.city.includes(search) || item.township.includes(search),
   );
 
   const openModal = () => {
@@ -85,25 +71,23 @@ export default function PickupSpotsPage() {
   };
 
   const handleSave = async () => {
+    let values: { city: string; township: string };
     try {
-      const values = await form.validateFields();
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
+    try {
       setSaving(true);
-
-      const res = await fetch("/api/pickup-spots", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          city: values.city,
-          township: values.township,
-        }),
+      await postJson("/api/pickup-spots", {
+        city: values.city,
+        township: values.township,
       });
-      if (!res.ok) throw new Error("Create failed");
       messageApi.success("自取地點已新增");
-
       closeModal();
       await fetchData();
-    } catch {
-      messageApi.error("新增失敗");
+    } catch (e) {
+      messageApi.error(e instanceof Error ? e.message : "新增失敗");
     } finally {
       setSaving(false);
     }
@@ -112,14 +96,11 @@ export default function PickupSpotsPage() {
   const handleDelete = async (id: number) => {
     try {
       setSaving(true);
-      const res = await fetch(`/api/pickup-spots/${id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) throw new Error("Delete failed");
+      await deleteJson(`/api/pickup-spots/${id}`);
       messageApi.success("自取地點已刪除");
       await fetchData();
-    } catch {
-      messageApi.error("刪除失敗");
+    } catch (e) {
+      messageApi.error(e instanceof Error ? e.message : "刪除失敗");
     } finally {
       setSaving(false);
     }
@@ -139,7 +120,7 @@ export default function PickupSpotsPage() {
       ),
     },
     {
-      title: "鄉鎮",
+      title: "地點",
       dataIndex: "township",
       key: "township",
       render: (township: string) => <Text>{township}</Text>,
@@ -169,42 +150,35 @@ export default function PickupSpotsPage() {
     <>
       {contextHolder}
       <Card>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 16,
-          }}
-        >
-          <Title level={3} style={{ margin: 0 }}>
-            自取點管理
-          </Title>
-          <Space>
-            <Input
-              placeholder="搜尋縣市或鄉鎮"
-              prefix={<SearchOutlined />}
-              allowClear
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 220 }}
-            />
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={fetchData}
-              loading={loading}
-            >
-              重新載入
-            </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => openModal()}
-            >
-              新增自取點
-            </Button>
-          </Space>
-        </div>
+        <PageHeader
+          title="自取點管理"
+          actions={
+            <Space>
+              <Input
+                placeholder="搜尋縣市或地點"
+                prefix={<SearchOutlined />}
+                allowClear
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ width: 220 }}
+              />
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={fetchData}
+                loading={loading}
+              >
+                重新載入
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => openModal()}
+              >
+                新增自取點
+              </Button>
+            </Space>
+          }
+        />
 
         <Spin spinning={loading}>
           <Table
@@ -243,22 +217,15 @@ export default function PickupSpotsPage() {
               placeholder="請選擇縣市"
               options={cityOptions}
               optionFilterProp="label"
-              onChange={() => form.setFieldValue("township", undefined)}
             />
           </Form.Item>
 
           <Form.Item
             name="township"
-            label="鄉鎮"
-            rules={[{ required: true, message: "請選擇鄉鎮" }]}
+            label="地點"
+            rules={[{ required: true, message: "請輸入地點" }]}
           >
-            <Select
-              showSearch
-              disabled={!selectedCity}
-              placeholder={selectedCity ? "請選擇鄉鎮" : "請先選擇縣市"}
-              options={townshipOptions}
-              optionFilterProp="label"
-            />
+            <Input placeholder="請輸入地點" />
           </Form.Item>
         </Form>
       </Modal>

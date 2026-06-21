@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Card,
-  Typography,
   Table,
   Button,
   Space,
@@ -14,6 +13,7 @@ import {
   message,
   Spin,
   Tag,
+  Typography,
 } from "antd";
 import {
   PlusOutlined,
@@ -24,14 +24,11 @@ import {
   AppstoreOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import type { CategoryRow as Category } from "@/app/lib/categories";
+import { fetchJson, postJson, putJson, deleteJson } from "@/app/lib/api-client";
+import { PageHeader } from "@/app/components/page-header";
 
-const { Title, Text } = Typography;
-
-interface Category {
-  id: number;
-  name: string;
-  productCount: number;
-}
+const { Text } = Typography;
 
 export default function CategoriesPage() {
   const [data, setData] = useState<Category[]>([]);
@@ -46,10 +43,7 @@ export default function CategoriesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/categories");
-      if (!res.ok) throw new Error("Failed to fetch");
-      const categories: Category[] = await res.json();
-      setData(categories);
+      setData(await fetchJson<Category[]>("/api/categories"));
     } catch {
       messageApi.error("讀取分類資料失敗");
     } finally {
@@ -93,26 +87,10 @@ export default function CategoriesPage() {
     try {
       setSaving(true);
       if (editing) {
-        const res = await fetch(`/api/categories/${editing.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: values.name }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          throw new Error(body?.error || "更新失敗");
-        }
+        await putJson(`/api/categories/${editing.id}`, { name: values.name });
         messageApi.success("分類已更新");
       } else {
-        const res = await fetch("/api/categories", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: values.name }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          throw new Error(body?.error || "新增失敗");
-        }
+        await postJson("/api/categories", { name: values.name });
         messageApi.success("分類已新增");
       }
       closeModal();
@@ -129,11 +107,7 @@ export default function CategoriesPage() {
   const handleDelete = async (id: number) => {
     try {
       setSaving(true);
-      const res = await fetch(`/api/categories/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error || "Delete failed");
-      }
+      await deleteJson(`/api/categories/${id}`);
       messageApi.success("分類已刪除");
       await fetchData();
     } catch (e) {
@@ -198,42 +172,35 @@ export default function CategoriesPage() {
     <>
       {contextHolder}
       <Card>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 16,
-          }}
-        >
-          <Title level={3} style={{ margin: 0 }}>
-            分類管理
-          </Title>
-          <Space>
-            <Input
-              placeholder="搜尋分類名稱"
-              prefix={<SearchOutlined />}
-              allowClear
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 220 }}
-            />
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={fetchData}
-              loading={loading}
-            >
-              重新載入
-            </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => openModal()}
-            >
-              新增分類
-            </Button>
-          </Space>
-        </div>
+        <PageHeader
+          title="分類管理"
+          actions={
+            <Space>
+              <Input
+                placeholder="搜尋分類名稱"
+                prefix={<SearchOutlined />}
+                allowClear
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ width: 220 }}
+              />
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={fetchData}
+                loading={loading}
+              >
+                重新載入
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => openModal()}
+              >
+                新增分類
+              </Button>
+            </Space>
+          }
+        />
 
         <Spin spinning={loading}>
           <Table

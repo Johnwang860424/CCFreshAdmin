@@ -1,25 +1,26 @@
 import { NextResponse } from "next/server";
-import { deletePickupSpot } from "@/app/lib/pickup-spots";
+import { deletePickupSpot, PickupSpotInUseError } from "@/app/lib/pickup-spots";
+import { jsonHandler } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { parseId } from "@/app/lib/validation";
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function DELETE(_request: Request, { params }: Params) {
-  try {
-    const { id: idStr } = await params;
-    const parsed = parseId(idStr);
-    if ("error" in parsed) return parsed.error;
-    const { id } = parsed;
+export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
+  const { id: idStr } = await params;
+  const parsed = parseId(idStr);
+  if ("error" in parsed) return parsed.error;
+  const { id } = parsed;
 
+  try {
     await deletePickupSpot(id);
-    await revalidateCache("pickup-spots");
-    return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("Failed to delete pickup spot:", err);
-    return NextResponse.json(
-      { error: "刪除自取地點失敗" },
-      { status: 500 }
-    );
+    if (err instanceof PickupSpotInUseError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
   }
-}
+
+  await revalidateCache("pickup-spots");
+  return { success: true };
+}, "刪除自取地點失敗");

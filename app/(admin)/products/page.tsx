@@ -29,24 +29,23 @@ import {
   CloseCircleFilled,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import {
+  PROMO_STRATEGIES,
+  getPromoStrategy,
+  type PromoConfig,
+} from "@/app/lib/promotions";
+import type { ProductRow as Product } from "@/app/lib/products";
+import { fetchJson, postJson, putJson, deleteJson } from "@/app/lib/api-client";
+import { PageHeader } from "@/app/components/page-header";
 
-const { Title, Text } = Typography;
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  imageUrl: string;
-  categoryId: number | null;
-  categoryName: string | null;
-  spec: string | null;
-  description: string | null;
-}
+const { Text } = Typography;
 
 interface Category {
   id: number;
   name: string;
 }
+
+const promoFieldName = (configKey: string) => `promo_${configKey}`;
 
 export default function ProductsPage() {
   const [data, setData] = useState<Product[]>([]);
@@ -61,15 +60,14 @@ export default function ProductsPage() {
   const [imageError, setImageError] = useState("");
   const uploadedImageUrlsRef = useRef<string[]>([]);
   const [form] = Form.useForm();
+  const promoType = Form.useWatch("promoType", form) as string | undefined;
+  const selectedStrategy = promoType ? getPromoStrategy(promoType) : undefined;
   const [messageApi, contextHolder] = message.useMessage();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/products");
-      if (!res.ok) throw new Error("Failed to fetch");
-      const products: Product[] = await res.json();
-      setData(products);
+      setData(await fetchJson<Product[]>("/api/products"));
     } catch {
       messageApi.error("讀取商品資料失敗");
     } finally {
@@ -79,10 +77,7 @@ export default function ProductsPage() {
 
   const fetchCategories = useCallback(async () => {
     try {
-      const res = await fetch("/api/categories");
-      if (!res.ok) throw new Error("Failed to fetch");
-      const cats: Category[] = await res.json();
-      setCategories(cats);
+      setCategories(await fetchJson<Category[]>("/api/categories"));
     } catch {
       messageApi.error("讀取分類資料失敗");
     }
@@ -103,6 +98,13 @@ export default function ProductsPage() {
         categoryId: editing.categoryId ?? undefined,
         spec: editing.spec ?? undefined,
         description: editing.description ?? undefined,
+        promoType: editing.promoType ?? undefined,
+        ...Object.fromEntries(
+          Object.entries(editing.promoConfig ?? {}).map(([k, v]) => [
+            promoFieldName(k),
+            v,
+          ]),
+        ),
       });
     } else {
       form.resetFields();
@@ -128,14 +130,10 @@ export default function ProductsPage() {
     uploadedImageUrlsRef.current = [];
   };
 
-  const deleteUploadedImage = useCallback(async (url: string) => {
-    const res = await fetch("/api/upload", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
-    if (!res.ok) throw new Error("Delete uploaded image failed");
-  }, []);
+  const deleteUploadedImage = useCallback(
+    (url: string) => deleteJson("/api/upload", { url }),
+    [],
+  );
 
   const handleUpload = async ({
     file,
@@ -150,12 +148,10 @@ export default function ProductsPage() {
     formData.append("file", file as File);
     setUploading(true);
     try {
-      const res = await fetch("/api/upload", {
+      const { url } = await fetchJson<{ url: string }>("/api/upload", {
         method: "POST",
         body: formData,
       });
-      if (!res.ok) throw new Error("Upload failed");
-      const { url } = await res.json();
       setCurrentImageUrl(url);
       uploadedImageUrlsRef.current = [...uploadedImageUrlsRef.current, url];
       setImageError("");
@@ -177,7 +173,8 @@ export default function ProductsPage() {
       categoryId: number;
       spec?: string;
       description?: string;
-    };
+      promoType?: string;
+    } & Record<string, unknown>;
     try {
       values = await form.validateFields();
     } catch {
@@ -185,6 +182,21 @@ export default function ProductsPage() {
     }
 
     const priceNum = Number(values.price);
+    const strategy = values.promoType
+      ? getPromoStrategy(values.promoType)
+      : undefined;
+    const promoConfig: PromoConfig | null = strategy
+      ? Object.fromEntries(
+          strategy.fields.map((f) => [
+            f.name,
+            Number(values[promoFieldName(f.name)]),
+          ]),
+        )
+      : null;
+    const promoPayload = {
+      promoType: values.promoType ?? null,
+      promoConfig,
+    };
 
     if (!currentImageUrl) {
       setImageError("請上傳商品圖片");
@@ -195,40 +207,26 @@ export default function ProductsPage() {
     try {
       setSaving(true);
       if (editing) {
-        const res = await fetch(`/api/products/${editing.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            price: priceNum,
-            imageUrl: currentImageUrl,
-            oldImageUrl: editing.imageUrl,
-            categoryId: values.categoryId,
-            spec: values.spec,
-            description: values.description,
-          }),
+        await putJson(`/api/products/${editing.id}`, {
+          price: priceNum,
+          imageUrl: currentImageUrl,
+          oldImageUrl: editing.imageUrl,
+          categoryId: values.categoryId,
+          spec: values.spec,
+          description: values.description,
+          ...promoPayload,
         });
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          throw new Error(body?.error || "更新失敗");
-        }
         messageApi.success("商品已更新");
       } else {
-        const res = await fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: values.name,
-            price: priceNum,
-            imageUrl: currentImageUrl,
-            categoryId: values.categoryId,
-            spec: values.spec,
-            description: values.description,
-          }),
+        await postJson("/api/products", {
+          name: values.name,
+          price: priceNum,
+          imageUrl: currentImageUrl,
+          categoryId: values.categoryId,
+          spec: values.spec,
+          description: values.description,
+          ...promoPayload,
         });
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          throw new Error(body?.error || "新增失敗");
-        }
         messageApi.success("商品已新增");
       }
 
@@ -266,13 +264,7 @@ export default function ProductsPage() {
   const handleDelete = async (id: number) => {
     try {
       setSaving(true);
-      const res = await fetch(`/api/products/${id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error || "刪除失敗");
-      }
+      await deleteJson(`/api/products/${id}`);
       messageApi.success("商品已刪除");
       await fetchData();
     } catch (e) {
@@ -330,7 +322,11 @@ export default function ProductsPage() {
       key: "categoryName",
       width: 120,
       render: (categoryName: string | null) =>
-        categoryName ? <Tag color="blue">{categoryName}</Tag> : <Text type="secondary">—</Text>,
+        categoryName ? (
+          <Tag color="blue">{categoryName}</Tag>
+        ) : (
+          <Text type="secondary">—</Text>
+        ),
     },
     {
       title: "規格",
@@ -346,6 +342,17 @@ export default function ProductsPage() {
       key: "price",
       width: 120,
       render: (price: number) => <Text>{price}</Text>,
+    },
+    {
+      title: "優惠",
+      key: "promo",
+      width: 160,
+      render: (_: unknown, record: Product) =>
+        record.promoSummary ? (
+          <Tag color="red">{record.promoSummary}</Tag>
+        ) : (
+          <Text type="secondary">—</Text>
+        ),
     },
     {
       title: "操作",
@@ -378,42 +385,35 @@ export default function ProductsPage() {
       {contextHolder}
       <Spin spinning={uploading} fullscreen description="圖片上傳中" />
       <Card>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 16,
-          }}
-        >
-          <Title level={3} style={{ margin: 0 }}>
-            商品管理
-          </Title>
-          <Space>
-            <Input
-              placeholder="搜尋產品名稱"
-              prefix={<SearchOutlined />}
-              allowClear
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 220 }}
-            />
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={fetchData}
-              loading={loading}
-            >
-              重新載入
-            </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => openModal()}
-            >
-              新增商品
-            </Button>
-          </Space>
-        </div>
+        <PageHeader
+          title="商品管理"
+          actions={
+            <Space>
+              <Input
+                placeholder="搜尋產品名稱"
+                prefix={<SearchOutlined />}
+                allowClear
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ width: 220 }}
+              />
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={fetchData}
+                loading={loading}
+              >
+                重新載入
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => openModal()}
+              >
+                新增商品
+              </Button>
+            </Space>
+          }
+        />
 
         <Spin spinning={loading}>
           <Table
@@ -478,6 +478,49 @@ export default function ProductsPage() {
           >
             <Input placeholder="例：50" />
           </Form.Item>
+
+          <Form.Item name="promoType" label="優惠方式">
+            <Select
+              allowClear
+              placeholder="無優惠"
+              options={PROMO_STRATEGIES.map((s) => ({
+                label: s.label,
+                value: s.type,
+              }))}
+            />
+          </Form.Item>
+
+          {selectedStrategy &&
+            selectedStrategy.fields.map((field) => (
+              <Form.Item
+                key={field.name}
+                name={promoFieldName(field.name)}
+                label={field.label}
+                tooltip={field.tooltip}
+                rules={[
+                  { required: true, message: `請輸入${field.label}` },
+                  {
+                    validator: (_, value) => {
+                      const num = Number(value);
+                      if (
+                        !Number.isInteger(num) ||
+                        num < field.min ||
+                        num > field.max
+                      ) {
+                        return Promise.reject(
+                          new Error(
+                            `${field.label}需為介於 ${field.min} ~ ${field.max} 的整數`,
+                          ),
+                        );
+                      }
+                      return Promise.resolve();
+                    },
+                  },
+                ]}
+              >
+                <Input placeholder={field.placeholder} />
+              </Form.Item>
+            ))}
 
           <Form.Item name="spec" label="規格">
             <Input placeholder="例：500g/包" />
