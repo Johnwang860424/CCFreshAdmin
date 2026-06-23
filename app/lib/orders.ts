@@ -23,6 +23,8 @@ export interface OrderRow {
   pickupSpotId: number | null;
   /** 自取點顯示名稱（縣市 + 鄉鎮），由 pickup_spots 即時關聯而來；宅配或取貨點已刪除為 null */
   pickupSpotLabel: string | null;
+  /** 自取點鄉鎮（不含縣市）；宅配或取貨點已刪除為 null */
+  pickupSpotTownship: string | null;
   /** 現場取貨號碼牌（每取貨點各自遞增；宅配為 null） */
   pickupNumber: number | null;
   shippingAddress: string | null;
@@ -63,6 +65,7 @@ function assembleOrders(
     deliveryMethod: r.delivery_method as string,
     pickupSpotId: (r.pickup_spot_id as number) ?? null,
     pickupSpotLabel: (r.pickup_spot_label as string) ?? null,
+    pickupSpotTownship: (r.pickup_spot_township as string) ?? null,
     pickupNumber: (r.pickup_number as number) ?? null,
     shippingAddress: (r.shipping_address as string) ?? null,
     note: (r.note as string) ?? null,
@@ -80,7 +83,8 @@ export async function getOrders(): Promise<OrderRow[]> {
            CASE
              WHEN ps.id IS NOT NULL THEN ps.city || ' ' || ps.township
              ELSE NULL
-           END AS pickup_spot_label
+           END AS pickup_spot_label,
+           ps.township AS pickup_spot_township
     FROM orders o
     LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
     ORDER BY o.id ASC

@@ -47,24 +47,27 @@ export const POST = jsonHandler(async (request) => {
   const header = [
     "取貨號",
     "客戶姓名",
+    "取貨地點",
     "購買清單",
     "訂單總額",
     "電話",
     "備註",
-    "地址",
   ];
 
   const rows = orders.map((order) => [
     order.pickupNumber ?? "",
     order.customerName,
-    // 將購買清單濃縮成單一欄位：「品項1 * 數量1/品項2 * 數量2」
+    // 取貨地點：自取帶入鄉鎮（不含縣市），宅配帶入收件地址
+    order.deliveryMethod === "delivery"
+      ? (order.shippingAddress ?? "")
+      : (order.pickupSpotTownship ?? ""),
     order.items
       .map((item) => `${item.productName} * ${item.quantity}`)
       .join("/"),
     order.total,
-    order.phone ?? "",
+    // 以 Excel 文字公式輸出，避免開啟 CSV 時把電話當數字而吃掉開頭的 0
+    order.phone ? `="${order.phone}"` : "",
     order.note ?? "",
-    order.shippingAddress ?? "",
   ]);
 
   const csv = buildCsv([header, ...rows]);
