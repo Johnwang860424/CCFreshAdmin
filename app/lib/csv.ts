@@ -15,7 +15,7 @@ export function buildCsv(
   { bom = true }: { bom?: boolean } = {},
 ): string {
   const body = rows.map((cells) => cells.map(escapeCsvCell).join(",")).join("\r\n");
-  return bom ? `﻿${body}` : body;
+  return bom ? `\uFEFF${body}` : body;
 }
 
 /** 台北時區的 YYYY-MM-DD 日期戳，供匯出檔名使用。 */

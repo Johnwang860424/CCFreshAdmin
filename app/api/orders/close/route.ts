@@ -62,7 +62,7 @@ export const POST = jsonHandler(async (request) => {
       ? (order.shippingAddress ?? "")
       : (order.pickupSpotTownship ?? ""),
     order.items
-      .map((item) => `${item.productName} * ${item.quantity}`)
+      .map((item) => `${item.productName}*${item.quantity}`)
       .join("/"),
     order.total,
     // 以 Excel 文字公式輸出，避免開啟 CSV 時把電話當數字而吃掉開頭的 0

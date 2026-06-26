@@ -74,7 +74,6 @@ export default function OrderSummaryPage() {
       ...matrix.products.map((product) => matrix.productTotals[product] ?? 0),
     ];
 
-    // buildCsv 已含 UTF-8 BOM，Excel 才能正確顯示中文。
     const csv = buildCsv([header, ...bodyRows, totalRow]);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     downloadBlob(blob, `訂單統計_${matrix.city}.csv`);
