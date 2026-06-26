@@ -21,6 +21,7 @@ import {
   ReloadOutlined,
   DownloadOutlined,
   ExclamationCircleFilled,
+  FileWordOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { getPromoStrategy, type PromoConfig } from "@/app/lib/promotions";
@@ -424,6 +425,13 @@ export default function OrdersPage() {
                 loading={locationsLoading || loading}
               >
                 重新載入
+              </Button>
+              <Button
+                icon={<FileWordOutlined />}
+                href={`/${encodeURIComponent("標籤.docx")}`}
+                download="標籤.docx"
+              >
+                下載標籤範本
               </Button>
               <Button
                 danger
