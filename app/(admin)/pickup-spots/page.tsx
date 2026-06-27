@@ -149,18 +149,18 @@ export default function PickupSpotsPage() {
   return (
     <>
       {contextHolder}
-      <Card>
+      <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
           title="自取點管理"
           actions={
-            <Space>
+            <Space wrap>
               <Input
                 placeholder="搜尋縣市或地點"
                 prefix={<SearchOutlined />}
                 allowClear
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ width: 220 }}
+                className="w-full sm:w-56"
               />
               <Button
                 icon={<ReloadOutlined />}
@@ -186,6 +186,7 @@ export default function PickupSpotsPage() {
             columns={columns}
             dataSource={filtered}
             pagination={{ pageSize: 10, showSizeChanger: true }}
+            scroll={{ x: "max-content" }}
           />
         </Spin>
       </Card>

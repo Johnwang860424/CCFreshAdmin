@@ -171,18 +171,18 @@ export default function CategoriesPage() {
   return (
     <>
       {contextHolder}
-      <Card>
+      <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
           title="分類管理"
           actions={
-            <Space>
+            <Space wrap>
               <Input
                 placeholder="搜尋分類名稱"
                 prefix={<SearchOutlined />}
                 allowClear
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ width: 220 }}
+                className="w-full sm:w-56"
               />
               <Button
                 icon={<ReloadOutlined />}
@@ -208,6 +208,7 @@ export default function CategoriesPage() {
             columns={columns}
             dataSource={filtered}
             pagination={{ pageSize: 10, showSizeChanger: true }}
+            scroll={{ x: "max-content" }}
           />
         </Spin>
       </Card>

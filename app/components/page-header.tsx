@@ -14,18 +14,15 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: 16,
-      }}
-    >
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-4 w-full">
       <Title level={3} style={{ margin: 0 }}>
         {title}
       </Title>
-      {actions}
+      {actions && (
+        <div className="flex flex-wrap items-center gap-2 justify-start sm:justify-end">
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

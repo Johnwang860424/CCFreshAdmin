@@ -111,14 +111,14 @@ export default function OrderSummaryPage() {
   return (
     <>
       {contextHolder}
-      <Card>
+      <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
           title="縣市訂單統計"
           actions={
-            <Space>
+            <Space wrap>
               <Select
                 placeholder="選擇縣市"
-                style={{ width: 200 }}
+                className="w-full sm:w-[200px]"
                 value={city}
                 onChange={setCity}
                 loading={citiesLoading}

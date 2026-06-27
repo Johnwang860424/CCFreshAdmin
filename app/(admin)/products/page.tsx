@@ -384,18 +384,18 @@ export default function ProductsPage() {
     <>
       {contextHolder}
       <Spin spinning={uploading} fullscreen description="圖片上傳中" />
-      <Card>
+      <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
           title="商品管理"
           actions={
-            <Space>
+            <Space wrap>
               <Input
                 placeholder="搜尋產品名稱"
                 prefix={<SearchOutlined />}
                 allowClear
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ width: 220 }}
+                className="w-full sm:w-56"
               />
               <Button
                 icon={<ReloadOutlined />}
@@ -421,6 +421,7 @@ export default function ProductsPage() {
             columns={columns}
             dataSource={filtered}
             pagination={{ pageSize: 10, showSizeChanger: true }}
+            scroll={{ x: "max-content" }}
           />
         </Spin>
       </Card>

@@ -43,7 +43,7 @@ export default function LoginPage() {
         background: "#f0f2f5",
       }}
     >
-      <Card style={{ width: 380, textAlign: "center", padding: "16px 0" }}>
+      <Card style={{ width: "90%", maxWidth: 380, textAlign: "center", padding: "16px 0" }}>
         <Space orientation="vertical" size={24} style={{ width: "100%" }}>
           <div>
             <Title level={3} style={{ margin: 0, marginBottom: 8 }}>

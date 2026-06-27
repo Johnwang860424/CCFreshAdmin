@@ -358,6 +358,7 @@ export default function OrdersPage() {
               },
             },
           ]}
+          scroll={{ x: "max-content" }}
         />
       ) : (
         <Empty
@@ -372,14 +373,14 @@ export default function OrdersPage() {
     <>
       {contextHolder}
       <Spin spinning={closing} fullscreen description="結單處理中…" />
-      <Card>
+      <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
           title="訂單管理"
           actions={
             <Space wrap>
               <Select
                 placeholder="選擇縣市"
-                style={{ width: 160 }}
+                className="w-full sm:w-40"
                 value={city}
                 onChange={(value) => {
                   setCity(value);
@@ -400,7 +401,7 @@ export default function OrdersPage() {
               />
               <Select
                 placeholder="選擇地點（全部）"
-                style={{ width: 160 }}
+                className="w-full sm:w-40"
                 value={township}
                 onChange={setTownship}
                 disabled={!city || city === DELIVERY_CITY}
@@ -414,7 +415,7 @@ export default function OrdersPage() {
                 allowClear
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ width: 240 }}
+                className="w-full sm:w-60"
               />
               <Button
                 icon={<ReloadOutlined />}
@@ -477,6 +478,7 @@ export default function OrdersPage() {
               }}
               pagination={{ pageSize: 10, showSizeChanger: true }}
               locale={{ emptyText: "此縣市/地點目前沒有訂單" }}
+              scroll={{ x: "max-content" }}
             />
           </Spin>
         )}
