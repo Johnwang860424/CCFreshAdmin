@@ -62,3 +62,8 @@ Upload validation lives server-side in `app/api/upload/route.ts`: JPG/PNG/WebP o
 ## Environment variables
 
 Required: `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `ALLOWED_EMAILS` (Google OAuth login), `CLOUDINARY_*` (image upload), and `DATABASE_URL` (Neon Postgres connection — pooled string is fine for the serverless HTTP driver). See `.env.local.example`.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
