@@ -87,7 +87,7 @@ Next.js App Router 單一專案，路徑相對 repo root（`app/`, `db/`）。
 
 ### Implementation for User Story 3
 
-- [ ] T011 [US3] 對既有 Neon 資料庫執行 `db/migrations/001_add_product_sort_order.sql`（Neon SQL Editor），驗證 `sort_order` 全部回填、唯一、與 `id` 序一致（FR-004 / SC-002）
+- [X] T011 [US3] 對既有 Neon 資料庫執行 `db/migrations/001_add_product_sort_order.sql`（Neon SQL Editor），驗證 `sort_order` 全部回填、唯一、與 `id` 序一致（FR-004 / SC-002）
 
 **Checkpoint**: 所有 user story 皆可獨立驗證
 
@@ -98,7 +98,7 @@ Next.js App Router 單一專案，路徑相對 repo root（`app/`, `db/`）。
 **Purpose**: 收尾與整體驗證
 
 - [X] T012 [P] 執行 `npm run lint` 並修正本功能新增/變更檔案的問題
-- [ ] T013 依 `specs/001-product-sorting/quickstart.md` 跑完 Scenario 1–5（含邊界：空清單、單筆、跨分頁、失敗回滾）
+- [X] T013 依 `specs/001-product-sorting/quickstart.md` 跑完 Scenario 1–5（含邊界：空清單、單筆、跨分頁、失敗回滾）
 
 ---
 
