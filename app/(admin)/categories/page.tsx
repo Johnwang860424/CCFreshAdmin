@@ -207,7 +207,7 @@ export default function CategoriesPage() {
             rowKey="id"
             columns={columns}
             dataSource={filtered}
-            pagination={{ pageSize: 10, showSizeChanger: true }}
+            pagination={{ defaultPageSize: 10, showSizeChanger: true }}
             scroll={{ x: "max-content" }}
           />
         </Spin>

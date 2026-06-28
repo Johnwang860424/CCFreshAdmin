@@ -476,7 +476,7 @@ export default function OrdersPage() {
                 expandedRowRender,
                 rowExpandable: () => true,
               }}
-              pagination={{ pageSize: 10, showSizeChanger: true }}
+              pagination={{ defaultPageSize: 10, showSizeChanger: true }}
               locale={{ emptyText: "此縣市/地點目前沒有訂單" }}
               scroll={{ x: "max-content" }}
             />
