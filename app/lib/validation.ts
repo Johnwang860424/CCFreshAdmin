@@ -26,6 +26,26 @@ function badRequest(message: string): { error: NextResponse } {
   return { error: NextResponse.json({ error: message }, { status: 400 }) };
 }
 
+/**
+ * 驗證商品排序請求：`ids` 須為非空、皆正整數、不重複的陣列。
+ * 回傳已驗證的 id 陣列（代表期望的由前到後完整順序）。
+ */
+export function validateReorderBody(
+  body: unknown,
+): { value: number[] } | { error: NextResponse } {
+  const { ids } = (body ?? {}) as { ids?: unknown };
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return badRequest("排序資料格式錯誤");
+  }
+  const allValid = ids.every((id) => Number.isInteger(id) && (id as number) > 0);
+  if (!allValid || new Set(ids).size !== ids.length) {
+    return badRequest("排序資料格式錯誤");
+  }
+
+  return { value: ids as number[] };
+}
+
 /** 已驗證、可直接寫入 DB 的商品欄位（name 僅在新增時存在）。 */
 export interface ValidatedProduct {
   name: string;

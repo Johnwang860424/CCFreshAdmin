@@ -1,6 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  useContext,
+  createContext,
+  type CSSProperties,
+  type HTMLAttributes,
+} from "react";
 import {
   Card,
   Typography,
@@ -27,8 +37,25 @@ import {
   ShoppingOutlined,
   PictureOutlined,
   CloseCircleFilled,
+  HolderOutlined,
+  SortAscendingOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   PROMO_STRATEGIES,
   getPromoStrategy,
@@ -47,6 +74,64 @@ interface Category {
 
 const promoFieldName = (configKey: string) => `promo_${configKey}`;
 
+// ── 拖拉排序：dnd-kit + antd Table 自訂列 ──────────────────────────────
+interface RowContextProps {
+  setActivatorNodeRef?: (element: HTMLElement | null) => void;
+  listeners?: Record<string, (event: unknown) => void>;
+}
+const RowContext = createContext<RowContextProps>({});
+
+/** 排序模式下的拖拉把手；只有按住此把手才會觸發拖拉。 */
+function DragHandle() {
+  const { setActivatorNodeRef, listeners } = useContext(RowContext);
+  return (
+    <Button
+      type="text"
+      size="small"
+      icon={<HolderOutlined />}
+      style={{ cursor: "move", touchAction: "none" }}
+      ref={setActivatorNodeRef}
+      {...listeners}
+    />
+  );
+}
+
+/** 可排序的表格列；id 對應 rowKey（商品 id）。 */
+function SortableRow(
+  props: HTMLAttributes<HTMLTableRowElement> & { "data-row-key": number },
+) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: props["data-row-key"] });
+
+  const style: CSSProperties = {
+    ...props.style,
+    transform: CSS.Translate.toString(transform),
+    transition,
+    ...(isDragging ? { position: "relative", zIndex: 9999 } : {}),
+  };
+
+  const contextValue = useMemo<RowContextProps>(
+    () => ({
+      setActivatorNodeRef,
+      listeners: listeners as RowContextProps["listeners"],
+    }),
+    [setActivatorNodeRef, listeners],
+  );
+
+  return (
+    <RowContext.Provider value={contextValue}>
+      <tr {...props} ref={setNodeRef} style={style} {...attributes} />
+    </RowContext.Provider>
+  );
+}
+
 export default function ProductsPage() {
   const [data, setData] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -54,6 +139,8 @@ export default function ProductsPage() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState("");
+  const [sortMode, setSortMode] = useState(false);
+  const [reordering, setReordering] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
   const [currentImageUrl, setCurrentImageUrl] = useState("");
@@ -187,11 +274,11 @@ export default function ProductsPage() {
       : undefined;
     const promoConfig: PromoConfig | null = strategy
       ? Object.fromEntries(
-          strategy.fields.map((f) => [
-            f.name,
-            Number(values[promoFieldName(f.name)]),
-          ]),
-        )
+        strategy.fields.map((f) => [
+          f.name,
+          Number(values[promoFieldName(f.name)]),
+        ]),
+      )
       : null;
     const promoPayload = {
       promoType: values.promoType ?? null,
@@ -272,6 +359,41 @@ export default function ProductsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // 需按住把手移動些微距離才啟動拖拉，避免點擊把手即誤觸。
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  );
+
+  const handleDragEnd = async ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+
+    const prev = data;
+    const oldIndex = prev.findIndex((i) => i.id === active.id);
+    const newIndex = prev.findIndex((i) => i.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const next = arrayMove(prev, oldIndex, newIndex);
+    setData(next); // 樂觀更新
+
+    try {
+      setReordering(true);
+      await putJson("/api/products/reorder", { ids: next.map((i) => i.id) });
+    } catch {
+      setData(prev); // 失敗回滾
+      messageApi.error("排序儲存失敗，已還原順序");
+    } finally {
+      setReordering(false);
+    }
+  };
+
+  const dragHandleColumn: ColumnsType<Product>[number] = {
+    title: "排序",
+    key: "sort",
+    width: 64,
+    align: "center",
+    render: () => <DragHandle />,
   };
 
   const columns: ColumnsType<Product> = [
@@ -380,6 +502,12 @@ export default function ProductsPage() {
     },
   ];
 
+  // 排序模式：把手在前、隱藏「操作」欄，避免拖拉時誤觸編輯/刪除。
+  const sortColumns: ColumnsType<Product> = [
+    dragHandleColumn,
+    ...columns.filter((c) => c.key !== "actions"),
+  ];
+
   return (
     <>
       {contextHolder}
@@ -388,41 +516,87 @@ export default function ProductsPage() {
         <PageHeader
           title="商品管理"
           actions={
-            <Space wrap>
-              <Input
-                placeholder="搜尋產品名稱"
-                prefix={<SearchOutlined />}
-                allowClear
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full sm:w-56"
-              />
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={fetchData}
-                loading={loading}
-              >
-                重新載入
-              </Button>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => openModal()}
-              >
-                新增商品
-              </Button>
-            </Space>
+            sortMode ? (
+              <Space wrap>
+                <Text type="secondary">拖拉左側把手調整順序，變更即時儲存</Text>
+                <Button
+                  type="primary"
+                  icon={<SortAscendingOutlined />}
+                  loading={reordering}
+                  onClick={() => setSortMode(false)}
+                >
+                  完成排序
+                </Button>
+              </Space>
+            ) : (
+              <Space wrap>
+                <Input
+                  placeholder="搜尋產品名稱"
+                  prefix={<SearchOutlined />}
+                  allowClear
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full sm:w-56"
+                />
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={fetchData}
+                  loading={loading}
+                >
+                  重新載入
+                </Button>
+                <Button
+                  icon={<SortAscendingOutlined />}
+                  onClick={() => {
+                    setSearch("");
+                    setSortMode(true);
+                  }}
+                >
+                  排序
+                </Button>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => openModal()}
+                >
+                  新增商品
+                </Button>
+              </Space>
+            )
           }
         />
 
         <Spin spinning={loading}>
-          <Table
-            rowKey="id"
-            columns={columns}
-            dataSource={filtered}
-            pagination={{ pageSize: 10, showSizeChanger: true }}
-            scroll={{ x: "max-content" }}
-          />
+          {sortMode ? (
+            <DndContext
+              sensors={sensors}
+              onDragEnd={handleDragEnd}
+              modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+              autoScroll={{ threshold: { x: 0, y: 0.05 } }}
+            >
+              <SortableContext
+                items={data.map((i) => i.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <Table
+                  rowKey="id"
+                  columns={sortColumns}
+                  dataSource={data}
+                  pagination={false}
+                  scroll={{ x: "max-content" }}
+                  components={{ body: { row: SortableRow } }}
+                />
+              </SortableContext>
+            </DndContext>
+          ) : (
+            <Table
+              rowKey="id"
+              columns={columns}
+              dataSource={filtered}
+              pagination={{ pageSize: 10, showSizeChanger: true }}
+              scroll={{ x: "max-content" }}
+            />
+          )}
         </Spin>
       </Card>
 

@@ -14,6 +14,7 @@ interface ProductDbRow {
   description: string | null;
   promo_type: string | null;
   promo_config: PromoConfig | null;
+  sort_order: number;
 }
 
 /** 對外回傳的商品列（camelCase，附優惠摘要文字）。 */
@@ -29,6 +30,7 @@ export interface ProductRow {
   promoType: string | null;
   promoConfig: PromoConfig | null;
   promoSummary: string | null;
+  sortOrder: number;
 }
 
 function toProductRow(row: ProductDbRow): ProductRow {
@@ -50,6 +52,7 @@ function toProductRow(row: ProductDbRow): ProductRow {
     promoType: row.promo_type ?? null,
     promoConfig,
     promoSummary,
+    sortOrder: row.sort_order,
   };
 }
 
@@ -66,10 +69,11 @@ export const getProducts = unstable_cache(
         p.spec,
         p.description,
         p.promo_type,
-        p.promo_config
+        p.promo_config,
+        p.sort_order
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
-      ORDER BY p.id
+      ORDER BY p.sort_order, p.id
     `) as ProductDbRow[];
     return rows.map(toProductRow);
   },
@@ -88,9 +92,30 @@ export async function addProduct(
   promoConfig: PromoConfig | null,
 ) {
   const configJson = promoConfig === null ? null : JSON.stringify(promoConfig);
+  // sort_order 取目前最大值 +1，使新商品排在列表最後。
   await sql`
-    INSERT INTO products (name, price, image_url, category_id, spec, description, promo_type, promo_config)
-    VALUES (${name}, ${price}, ${imageUrl}, ${categoryId}, ${spec}, ${description}, ${promoType}, ${configJson}::jsonb)
+    INSERT INTO products (name, price, image_url, category_id, spec, description, promo_type, promo_config, sort_order)
+    VALUES (
+      ${name}, ${price}, ${imageUrl}, ${categoryId}, ${spec}, ${description}, ${promoType}, ${configJson}::jsonb,
+      (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM products)
+    )
+  `;
+}
+
+/**
+ * 依傳入的 id 順序原子重寫所有商品的 sort_order（1-based）。
+ * 單一 SQL 語句即達原子性（Neon serverless HTTP 無互動式交易）；
+ * 陣列中已不存在於 DB 的 id 會被 WHERE 自然略過。
+ */
+export async function reorderProducts(ids: number[]) {
+  await sql`
+    UPDATE products AS p
+    SET sort_order = v.ord
+    FROM (
+      SELECT id, ord
+      FROM unnest(${ids}::int[]) WITH ORDINALITY AS t(id, ord)
+    ) AS v
+    WHERE p.id = v.id
   `;
 }
 
