@@ -133,3 +133,118 @@ export function validateProductBody(
     },
   };
 }
+
+/** 訂單來源標籤允許值；未指定時預設「網站」（顧客端外部訂單亦套此預設）。 */
+export const ORDER_TAGS = ["網站", "FB", "Line"] as const;
+export type OrderTag = (typeof ORDER_TAGS)[number];
+
+/** 已驗證的訂單明細項（金額由後端計算，不取前端值）。 */
+export interface ValidatedOrderItem {
+  productId: number;
+  quantity: number;
+}
+
+/** 已驗證、可交給 createOrder 的建立訂單欄位。 */
+export interface ValidatedCreateOrder {
+  customerName: string;
+  phone: string | null;
+  tag: OrderTag;
+  deliveryMethod: "pickup" | "delivery";
+  pickupSpotId: number | null;
+  shippingAddress: string | null;
+  note: string | null;
+  items: ValidatedOrderItem[];
+}
+
+/**
+ * 驗證後台「新增訂單」請求。金額相關欄位一律忽略（由後端依商品目前單價＋促銷計算），
+ * 故此處只驗證客戶、取貨方式、來源標籤與商品明細。重複商品合併數量。
+ */
+export function validateCreateOrderBody(
+  body: unknown,
+): { value: ValidatedCreateOrder } | { error: NextResponse } {
+  const {
+    customerName,
+    phone,
+    tag,
+    deliveryMethod,
+    pickupSpotId,
+    shippingAddress,
+    note,
+    items,
+  } = (body ?? {}) as {
+    customerName?: string;
+    phone?: string;
+    tag?: string;
+    deliveryMethod?: string;
+    pickupSpotId?: number | string;
+    shippingAddress?: string;
+    note?: string;
+    items?: unknown;
+  };
+
+  const name = typeof customerName === "string" ? customerName.trim() : "";
+  if (!name) return badRequest("客戶姓名為必填");
+  if (name.length > MAX_LEN.name) {
+    return badRequest(`客戶姓名不可超過 ${MAX_LEN.name} 字`);
+  }
+
+  const tagVal = tag == null || tag === "" ? "網站" : tag;
+  if (!ORDER_TAGS.includes(tagVal as OrderTag)) {
+    return badRequest("來源標籤無效");
+  }
+
+  if (deliveryMethod !== "pickup" && deliveryMethod !== "delivery") {
+    return badRequest("無效的取貨方式");
+  }
+
+  let spotId: number | null = null;
+  let address: string | null = null;
+  if (deliveryMethod === "pickup") {
+    const n = Number(pickupSpotId);
+    if (!Number.isInteger(n) || n <= 0) return badRequest("請選擇取貨點");
+    spotId = n;
+  } else {
+    address = typeof shippingAddress === "string" ? shippingAddress.trim() : "";
+    if (!address) return badRequest("宅配地址為必填");
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return badRequest("請至少加入一項商品");
+  }
+
+  // 重複 productId 合併數量為單一明細列。
+  const merged = new Map<number, number>();
+  for (const raw of items) {
+    const { productId, quantity } = (raw ?? {}) as {
+      productId?: number | string;
+      quantity?: number | string;
+    };
+    const pid = Number(productId);
+    const qty = Number(quantity);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return badRequest("商品資料格式錯誤");
+    }
+    if (!Number.isInteger(qty) || qty <= 0) {
+      return badRequest("商品數量需為正整數");
+    }
+    merged.set(pid, (merged.get(pid) ?? 0) + qty);
+  }
+  const mergedItems = [...merged.entries()].map(([productId, quantity]) => ({
+    productId,
+    quantity,
+  }));
+
+  return {
+    value: {
+      customerName: name,
+      phone: typeof phone === "string" && phone.trim() ? phone.trim() : null,
+      tag: tagVal as OrderTag,
+      deliveryMethod,
+      pickupSpotId: spotId,
+      shippingAddress: address,
+      note: typeof note === "string" && note.trim() ? note.trim() : null,
+      items: mergedItems,
+    },
+  };
+}

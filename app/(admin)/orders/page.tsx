@@ -8,9 +8,12 @@ import {
   Button,
   Space,
   Input,
+  InputNumber,
   Select,
   Tag,
   Modal,
+  Form,
+  Alert,
   message,
   Spin,
   Descriptions,
@@ -22,16 +25,24 @@ import {
   DownloadOutlined,
   ExclamationCircleFilled,
   FileWordOutlined,
+  PlusOutlined,
+  DeleteOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import { getPromoStrategy, type PromoConfig } from "@/app/lib/promotions";
+import {
+  getPromoStrategy,
+  calcLineSubtotal,
+  type PromoConfig,
+} from "@/app/lib/promotions";
 import type {
   OrderRow as Order,
   OrderItemRow as OrderItem,
   OrderLocation,
   CloseGroupSummary as CloseGroup,
 } from "@/app/lib/orders";
-import { fetchJson, downloadBlob } from "@/app/lib/api-client";
+import type { ProductRow } from "@/app/lib/products";
+import type { PickupSpotRow } from "@/app/lib/pickup-spots";
+import { fetchJson, postJson, downloadBlob } from "@/app/lib/api-client";
 import { safeFilename, taipeiDateStamp } from "@/app/lib/csv";
 import { PageHeader } from "@/app/components/page-header";
 
@@ -51,6 +62,34 @@ function describePromo(
 /** 縣市下拉選單中代表「宅配」的特殊值（宅配無結構化縣市，故獨立成一個選項） */
 const DELIVERY_CITY = "__delivery__";
 
+/** 來源標籤選項（與後端 ORDER_TAGS 對應）；預設「網站」。 */
+const TAG_OPTIONS = ["網站", "FB", "Line"] as const;
+
+/** 來源標籤的顯示色。 */
+function tagColor(tag: string): string {
+  if (tag === "FB") return "blue";
+  if (tag === "Line") return "green";
+  return "default";
+}
+
+/** 新增訂單表單的明細列。 */
+interface OrderItemFormValue {
+  productId?: number;
+  quantity?: number;
+}
+
+/** 新增訂單表單值。 */
+interface CreateOrderFormValues {
+  customerName: string;
+  phone?: string;
+  tag: string;
+  deliveryMethod: "pickup" | "delivery";
+  pickupSpotId?: number;
+  shippingAddress?: string;
+  note?: string;
+  items: OrderItemFormValue[];
+}
+
 export default function OrdersPage() {
   const [locations, setLocations] = useState<OrderLocation[]>([]);
   const [hasDelivery, setHasDelivery] = useState(false);
@@ -66,6 +105,60 @@ export default function OrdersPage() {
   const [closingKey, setClosingKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [messageApi, contextHolder] = message.useMessage();
+
+  // 新增訂單表單狀態
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [products, setProducts] = useState<ProductRow[]>([]);
+  const [pickupSpots, setPickupSpots] = useState<PickupSpotRow[]>([]);
+  const [createDataLoading, setCreateDataLoading] = useState(false);
+  const [form] = Form.useForm<CreateOrderFormValues>();
+  const watchedMethod = Form.useWatch("deliveryMethod", form);
+  const watchedItems = Form.useWatch("items", form);
+
+  const productById = useMemo(
+    () => new Map(products.map((p) => [p.id, p])),
+    [products],
+  );
+
+  // 依目前表單明細，以共用 calcLineSubtotal 即時估算總額（與後端計算邏輯一致）。
+  const estimatedTotal = useMemo(() => {
+    if (!watchedItems) return 0;
+    return watchedItems.reduce((sum, item) => {
+      const product = item?.productId
+        ? productById.get(item.productId)
+        : undefined;
+      const qty = Number(item?.quantity);
+      if (!product || !Number.isInteger(qty) || qty <= 0) return sum;
+      const promo =
+        product.promoType && product.promoConfig
+          ? { type: product.promoType, config: product.promoConfig }
+          : null;
+      return sum + calcLineSubtotal(promo, product.price, qty);
+    }, 0);
+  }, [watchedItems, productById]);
+
+  const openCreateModal = useCallback(async () => {
+    setCreateOpen(true);
+    setCreateDataLoading(true);
+    try {
+      const [prods, spots] = await Promise.all([
+        fetchJson<ProductRow[]>("/api/products"),
+        fetchJson<PickupSpotRow[]>("/api/pickup-spots"),
+      ]);
+      setProducts(prods);
+      setPickupSpots(spots);
+    } catch {
+      messageApi.error("讀取商品或取貨點清單失敗");
+    } finally {
+      setCreateDataLoading(false);
+    }
+  }, [messageApi]);
+
+  const closeCreateModal = useCallback(() => {
+    setCreateOpen(false);
+    form.resetFields();
+  }, [form]);
 
   // 進到畫面時僅取得有訂單的縣市/鄉鎮清單，不載入全部訂單
   const fetchLocations = useCallback(async () => {
@@ -121,6 +214,43 @@ export default function OrdersPage() {
       setGroupsLoading(false);
     }
   }, [messageApi]);
+
+  const handleCreate = useCallback(async () => {
+    let values: CreateOrderFormValues;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return; // 驗證失敗，antd 已標示欄位
+    }
+    setCreating(true);
+    try {
+      await postJson("/api/orders", {
+        customerName: values.customerName,
+        phone: values.phone,
+        tag: values.tag,
+        deliveryMethod: values.deliveryMethod,
+        pickupSpotId:
+          values.deliveryMethod === "pickup" ? values.pickupSpotId : null,
+        shippingAddress:
+          values.deliveryMethod === "delivery" ? values.shippingAddress : null,
+        note: values.note,
+        items: values.items.map((i) => ({
+          productId: i.productId,
+          quantity: i.quantity,
+        })),
+      });
+      messageApi.success("訂單已新增");
+      setCreateOpen(false);
+      form.resetFields();
+      // 重新整理縣市/地點清單；若目前正檢視某縣市，連同訂單一起刷新。
+      fetchLocations();
+      if (city) fetchOrders(city, township);
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "新增訂單失敗");
+    } finally {
+      setCreating(false);
+    }
+  }, [form, messageApi, fetchLocations, fetchOrders, city, township]);
 
   useEffect(() => {
     fetchLocations();
@@ -254,6 +384,13 @@ export default function OrdersPage() {
       ellipsis: true,
     },
     {
+      title: "來源",
+      dataIndex: "tag",
+      key: "tag",
+      width: 90,
+      render: (tag: string) => <Tag color={tagColor(tag)}>{tag || "網站"}</Tag>,
+    },
+    {
       title: "總額",
       dataIndex: "total",
       key: "total",
@@ -378,6 +515,13 @@ export default function OrdersPage() {
           title="訂單管理"
           actions={
             <Space wrap>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={openCreateModal}
+              >
+                新增訂單
+              </Button>
               <Select
                 placeholder="選擇縣市"
                 className="w-full sm:w-40"
@@ -487,9 +631,10 @@ export default function OrdersPage() {
       <Modal
         title="結單（依分組）"
         open={closeModalOpen}
-        onCancel={() => setCloseModalOpen(false)}
+        onCancel={() => {
+          if (!closing) setCloseModalOpen(false);
+        }}
         footer={null}
-        mask={{ closable: !closing }}
       >
         <p style={{ color: "#8c8c8c", fontSize: 13 }}>
           每個自取點與「宅配」各自成一組，下載該組 CSV 成功後才會清除該組訂單。
@@ -536,6 +681,174 @@ export default function OrdersPage() {
               </div>
             ))
           )}
+        </Spin>
+      </Modal>
+
+      <Modal
+        title="新增訂單"
+        open={createOpen}
+        onOk={handleCreate}
+        onCancel={closeCreateModal}
+        okText="建立訂單"
+        cancelText="取消"
+        confirmLoading={creating}
+        width={720}
+        destroyOnHidden
+      >
+        <Spin spinning={createDataLoading}>
+          <Form
+            form={form}
+            layout="vertical"
+            initialValues={{
+              tag: "網站",
+              deliveryMethod: "pickup",
+              items: [{ quantity: 1 }],
+            }}
+          >
+            <Form.Item
+              label="客戶姓名"
+              name="customerName"
+              rules={[{ required: true, message: "請輸入客戶姓名" }]}
+            >
+              <Input placeholder="客戶姓名" maxLength={100} />
+            </Form.Item>
+
+            <Space size="middle" className="w-full" wrap>
+              <Form.Item label="電話" name="phone">
+                <Input placeholder="選填" />
+              </Form.Item>
+              <Form.Item
+                label="來源"
+                name="tag"
+                rules={[{ required: true }]}
+              >
+                <Select
+                  className="w-32"
+                  options={TAG_OPTIONS.map((t) => ({ label: t, value: t }))}
+                />
+              </Form.Item>
+              <Form.Item
+                label="取貨方式"
+                name="deliveryMethod"
+                rules={[{ required: true }]}
+              >
+                <Select
+                  className="w-32"
+                  options={[
+                    { label: "自取", value: "pickup" },
+                    { label: "宅配", value: "delivery" },
+                  ]}
+                />
+              </Form.Item>
+            </Space>
+
+            {watchedMethod === "delivery" ? (
+              <Form.Item
+                label="宅配地址"
+                name="shippingAddress"
+                rules={[{ required: true, message: "請輸入宅配地址" }]}
+              >
+                <Input placeholder="收件地址" />
+              </Form.Item>
+            ) : (
+              <>
+                {pickupSpots.length === 0 && !createDataLoading && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="目前沒有可用的取貨點，請先於「自取地點」建立後，再新增自取訂單。"
+                  />
+                )}
+                <Form.Item
+                  label="取貨點"
+                  name="pickupSpotId"
+                  rules={[{ required: true, message: "請選擇取貨點" }]}
+                >
+                  <Select
+                    placeholder="選擇取貨點"
+                    showSearch
+                    optionFilterProp="label"
+                    options={pickupSpots.map((s) => ({
+                      label: `${s.city} ${s.township}`,
+                      value: s.id,
+                    }))}
+                    notFoundContent="尚無取貨點"
+                  />
+                </Form.Item>
+              </>
+            )}
+
+            <Form.List name="items">
+              {(fields, { add, remove }) => (
+                <div>
+                  <div style={{ marginBottom: 8, fontWeight: 500 }}>商品明細</div>
+                  {fields.map((field) => (
+                    <Space
+                      key={field.key}
+                      align="baseline"
+                      style={{ display: "flex", marginBottom: 8 }}
+                    >
+                      <Form.Item
+                        name={[field.name, "productId"]}
+                        rules={[{ required: true, message: "請選擇商品" }]}
+                        style={{ marginBottom: 0 }}
+                      >
+                        <Select
+                          placeholder="選擇商品"
+                          showSearch
+                          optionFilterProp="label"
+                          style={{ width: 360 }}
+                          options={products.map((p) => ({
+                            label: `${p.name}（$${p.price}${p.promoSummary ? ` · ${p.promoSummary}` : ""
+                              }）`,
+                            value: p.id,
+                          }))}
+                          notFoundContent="尚無商品"
+                        />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "quantity"]}
+                        rules={[{ required: true, message: "請輸入數量" }]}
+                        style={{ marginBottom: 0 }}
+                      >
+                        <InputNumber min={1} precision={0} placeholder="數量" />
+                      </Form.Item>
+                      {fields.length > 1 && (
+                        <Button
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => remove(field.name)}
+                        />
+                      )}
+                    </Space>
+                  ))}
+                  <Button
+                    type="dashed"
+                    onClick={() => add({ quantity: 1 })}
+                    icon={<PlusOutlined />}
+                    block
+                  >
+                    新增商品
+                  </Button>
+                </div>
+              )}
+            </Form.List>
+
+            <Form.Item label="備註" name="note" style={{ marginTop: 16 }}>
+              <Input.TextArea rows={2} placeholder="選填" />
+            </Form.Item>
+
+            <div style={{ textAlign: "right" }}>
+              <Text type="secondary" style={{ marginRight: 8 }}>
+                預估總額
+              </Text>
+              <Text strong style={{ fontSize: 18, color: "#cf1322" }}>
+                ${estimatedTotal}
+              </Text>
+            </div>
+          </Form>
         </Spin>
       </Modal>
     </>

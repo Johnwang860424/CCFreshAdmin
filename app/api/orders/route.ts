@@ -1,10 +1,14 @@
+import { NextResponse } from "next/server";
 import {
   getOrdersByLocation,
   getOrderLocations,
   getDeliveryOrders,
   hasDeliveryOrders,
+  createOrder,
+  OrderInputError,
 } from "@/app/lib/orders";
 import { jsonHandler } from "@/app/lib/api";
+import { validateCreateOrderBody } from "@/app/lib/validation";
 
 // 訂單查詢：
 // - 無參數 → 回傳有自取訂單的縣市/鄉鎮清單與是否有宅配訂單（供下拉選單）。
@@ -31,3 +35,19 @@ export const GET = jsonHandler(async (request) => {
   const township = params.get("township");
   return getOrdersByLocation(city, township || null);
 }, "無法讀取訂單資料");
+
+export const POST = jsonHandler(async (request) => {
+  const body = await request.json();
+  const parsed = validateCreateOrderBody(body);
+  if ("error" in parsed) return parsed.error;
+
+  try {
+    const id = await createOrder(parsed.value);
+    return { success: true, id };
+  } catch (err) {
+    if (err instanceof OrderInputError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
+}, "新增訂單失敗");

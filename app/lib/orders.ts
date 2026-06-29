@@ -1,5 +1,6 @@
 import { sql } from "@/app/lib/db";
-import type { PromoConfig } from "@/app/lib/promotions";
+import { calcLineSubtotal, type PromoConfig } from "@/app/lib/promotions";
+import type { ValidatedCreateOrder } from "@/app/lib/validation";
 
 export interface OrderItemRow {
   id: number;
@@ -30,6 +31,8 @@ export interface OrderRow {
   shippingAddress: string | null;
   note: string | null;
   total: number;
+  /** 來源標籤：網站（預設）/ FB / Line */
+  tag: string;
   createdAt: string;
   items: OrderItemRow[];
 }
@@ -70,6 +73,7 @@ function assembleOrders(
     shippingAddress: (r.shipping_address as string) ?? null,
     note: (r.note as string) ?? null,
     total: r.total as number,
+    tag: (r.tag as string) ?? "網站",
     createdAt: r.created_at as string,
     items: itemsByOrderId.get(r.id as number) ?? [],
   }));
@@ -79,7 +83,7 @@ function assembleOrders(
 export async function getOrders(): Promise<OrderRow[]> {
   const orderRows = await sql`
     SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
-           o.pickup_number, o.shipping_address, o.note, o.total, o.created_at,
+           o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
            CASE
              WHEN ps.id IS NOT NULL THEN ps.city || ' ' || ps.township
              ELSE NULL
@@ -110,7 +114,7 @@ export async function getOrdersByLocation(
   const orderRows = township
     ? await sql`
         SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
-               o.pickup_number, o.shipping_address, o.note, o.total, o.created_at,
+               o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
                ps.city || ' ' || ps.township AS pickup_spot_label
         FROM orders o
         JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
@@ -120,7 +124,7 @@ export async function getOrdersByLocation(
       `
     : await sql`
         SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
-               o.pickup_number, o.shipping_address, o.note, o.total, o.created_at,
+               o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
                ps.city || ' ' || ps.township AS pickup_spot_label
         FROM orders o
         JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
@@ -148,7 +152,7 @@ export async function getOrdersByLocation(
 export async function getDeliveryOrders(): Promise<OrderRow[]> {
   const orderRows = await sql`
     SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
-           o.pickup_number, o.shipping_address, o.note, o.total, o.created_at,
+           o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
            NULL AS pickup_spot_label
     FROM orders o
     WHERE o.delivery_method = 'delivery'
@@ -328,6 +332,144 @@ export async function getCloseGroups(): Promise<CloseGroupSummary[]> {
     if (a.method !== b.method) return a.method === "pickup" ? -1 : 1;
     return a.display.localeCompare(b.display, "zh-Hant");
   });
+}
+
+/** 後台新增訂單時的業務性錯誤（如商品/取貨點不存在）；route 層據此回 400。 */
+export class OrderInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OrderInputError";
+  }
+}
+
+/** 自取訂單指派取貨號碼撞唯一鍵時的重試上限。 */
+const PICKUP_NUMBER_MAX_RETRY = 5;
+
+interface ProductSnapshot {
+  id: number;
+  name: string;
+  price: number;
+  promo_type: string | null;
+  promo_config: PromoConfig | null;
+}
+
+/**
+ * 後台手動建立一筆訂單（含明細）。
+ * - 明細的單價/促銷/小計一律以商品「目前」資料快照計算（calcLineSubtotal），不採信前端金額。
+ * - 自取訂單依既有約定指派 pickup_number（每取貨點各自遞增），撞唯一鍵時重試；宅配為 NULL。
+ * - 以單一 CTE SQL 語句原子寫入 orders 與 order_items（Neon HTTP 無互動式交易）。
+ * 回傳新訂單 id。
+ */
+export async function createOrder(input: ValidatedCreateOrder): Promise<number> {
+  const productIds = input.items.map((i) => i.productId);
+
+  const products = (await sql`
+    SELECT id, name, price, promo_type, promo_config
+    FROM products
+    WHERE id = ANY(${productIds})
+  `) as ProductSnapshot[];
+
+  const byId = new Map(products.map((p) => [p.id, p]));
+  for (const it of input.items) {
+    if (!byId.has(it.productId)) {
+      throw new OrderInputError("部分商品不存在，請重新選擇");
+    }
+  }
+
+  if (input.deliveryMethod === "pickup") {
+    const spot = await sql`
+      SELECT id FROM pickup_spots WHERE id = ${input.pickupSpotId}
+    `;
+    if (spot.length === 0) {
+      throw new OrderInputError("選定的取貨點不存在，請重新選擇");
+    }
+  }
+
+  // 依商品目前單價＋促銷計算各項小計與總額，並備好寫入用的快照欄位。
+  const lineItems = input.items.map((it) => {
+    const p = byId.get(it.productId)!;
+    const promoType = p.promo_type ?? null;
+    const promoConfig = p.promo_config ?? null;
+    const promo =
+      promoType && promoConfig ? { type: promoType, config: promoConfig } : null;
+    return {
+      productId: it.productId,
+      productName: p.name,
+      unitPrice: p.price,
+      quantity: it.quantity,
+      promoType,
+      promoConfig,
+      subtotal: calcLineSubtotal(promo, p.price, it.quantity),
+    };
+  });
+  const total = lineItems.reduce((sum, li) => sum + li.subtotal, 0);
+
+  // unnest 用的平行陣列（promo_config 以 text[] 傳入，於 SELECT 時逐筆轉 jsonb）。
+  const productIdArr = lineItems.map((li) => li.productId);
+  const productNameArr = lineItems.map((li) => li.productName);
+  const unitPriceArr = lineItems.map((li) => li.unitPrice);
+  const quantityArr = lineItems.map((li) => li.quantity);
+  const promoTypeArr = lineItems.map((li) => li.promoType);
+  const promoConfigArr = lineItems.map((li) =>
+    li.promoConfig === null ? null : JSON.stringify(li.promoConfig),
+  );
+  const subtotalArr = lineItems.map((li) => li.subtotal);
+
+  const insertOnce = async (pickupNumber: number | null): Promise<number> => {
+    const rows = await sql`
+      WITH new_order AS (
+        INSERT INTO orders (
+          customer_name, phone, delivery_method, pickup_spot_id,
+          pickup_number, shipping_address, note, total, tag
+        )
+        VALUES (
+          ${input.customerName}, ${input.phone}, ${input.deliveryMethod},
+          ${input.pickupSpotId}, ${pickupNumber}, ${input.shippingAddress},
+          ${input.note}, ${total}, ${input.tag}
+        )
+        RETURNING id
+      )
+      INSERT INTO order_items (
+        order_id, product_id, product_name, unit_price, quantity,
+        promo_type, promo_config, subtotal
+      )
+      SELECT new_order.id, t.product_id, t.product_name, t.unit_price, t.quantity,
+             t.promo_type, t.promo_config::jsonb, t.subtotal
+      FROM new_order, unnest(
+        ${productIdArr}::int[],
+        ${productNameArr}::text[],
+        ${unitPriceArr}::int[],
+        ${quantityArr}::int[],
+        ${promoTypeArr}::text[],
+        ${promoConfigArr}::text[],
+        ${subtotalArr}::int[]
+      ) AS t(product_id, product_name, unit_price, quantity,
+             promo_type, promo_config, subtotal)
+      RETURNING order_id
+    `;
+    return rows[0].order_id as number;
+  };
+
+  if (input.deliveryMethod !== "pickup") {
+    return insertOnce(null);
+  }
+
+  // 自取：取下一個號碼牌；撞唯一鍵 (pickup_spot_id, pickup_number) 時重算重試。
+  for (let attempt = 0; attempt < PICKUP_NUMBER_MAX_RETRY; attempt++) {
+    const [{ next }] = (await sql`
+      SELECT COALESCE(MAX(pickup_number), 0) + 1 AS next
+      FROM orders
+      WHERE pickup_spot_id = ${input.pickupSpotId}
+    `) as { next: number }[];
+    try {
+      return await insertOnce(next);
+    } catch (err) {
+      // 23505 = unique_violation：號碼被搶走，重算再試。
+      if ((err as { code?: string })?.code === "23505") continue;
+      throw err;
+    }
+  }
+  throw new OrderInputError("取貨號碼指派衝突，請稍後再試");
 }
 
 /**

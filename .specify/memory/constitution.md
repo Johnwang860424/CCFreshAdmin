@@ -1,29 +1,15 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (template, unversioned) → 1.0.0
-Bump rationale: First concrete ratification of the constitution; all placeholder
-  tokens replaced with project-specific principles. MAJOR baseline (1.0.0).
+Version change: 1.1.0 → 1.1.1
+Bump rationale: Principle III clarified to reflect that /api/* routes (except /api/auth) are in the proxy matcher, but explicit auth verification in handlers is still required for defense-in-depth → PATCH.
 
 Modified principles:
-  - [PRINCIPLE_1_NAME] → I. Read the Bundled Docs Before Writing Framework Code
-  - [PRINCIPLE_2_NAME] → II. Parameterized SQL Only (NON-NEGOTIABLE)
-  - [PRINCIPLE_3_NAME] → III. Deny-by-Default Authorization
-  - [PRINCIPLE_4_NAME] → IV. No Orphaned Images
-  - [PRINCIPLE_5_NAME] → V. Order History Is Immutable
+  - III. Deny-by-Default Authorization (clarified matcher coverage and rationale for explicit verification)
 
-Added sections:
-  - Technology Constraints (was [SECTION_2_NAME])
-  - Development Workflow (was [SECTION_3_NAME])
+Added sections: none
 
 Removed sections: none
-
-Templates requiring updates:
-  - ✅ .specify/templates/plan-template.md (Constitution Check is generic; no change needed)
-  - ✅ .specify/templates/spec-template.md (no constitution references)
-  - ✅ .specify/templates/tasks-template.md (no constitution references)
-
-Follow-up TODOs: none
 -->
 
 # CC 生鮮 (CC Fresh) Admin Constitution
@@ -61,13 +47,13 @@ auditable and safe.
 Authentication and the email allowlist (`ALLOWED_EMAILS`) are deny-by-default: an
 empty or unmatched allowlist MUST result in no access. Protected pages live under
 the `app/(admin)/` route group and are guarded server-side. API routes under
-`app/api/` are NOT covered by the `proxy.ts` matcher; any handler that mutates
-data or exposes sensitive reads MUST validate authorization explicitly rather
-than assuming middleware protection.
+`app/api/` (except `/api/auth` NextAuth endpoints) are covered by the `proxy.ts`
+matcher; however, any handler that mutates data or exposes sensitive reads MUST
+validate authorization explicitly (`auth()`) rather than solely assuming middleware protection.
 
-Rationale: The middleware matcher excludes `api`, so an unguarded route handler
-is effectively public; access control must be explicit where the matcher does not
-reach.
+Rationale: Relying solely on global middleware configurations is error-prone. Explicit
+access control on mutating/sensitive endpoints ensures defense-in-depth and guards
+against security regressions if matcher exclusions are modified.
 
 ### IV. No Orphaned Images
 
@@ -83,16 +69,19 @@ ordered cleanup prevents leaked or dangling assets and broken deletes.
 
 ### V. Order History Is Immutable
 
-`orders` and `order_items` are written by the external customer-facing app; this
-admin MUST treat them as read-only except for export (結單 CSV) and clearing.
+Existing `orders` and `order_items` rows are immutable, but new orders MAY be
+appended. Once written, an order or order-item row MUST NOT be edited or deleted
+in place (bulk export 結單 CSV and clearing/closing aside); admin order creation
+MUST insert new `orders`/`order_items` rows rather than mutating existing ones.
 Snapshotted columns (`product_name`, `unit_price`, `promo_*`, `subtotal`) MUST be
-preserved so historical orders survive later product or pickup-spot edits.
-Referential-integrity rules MUST be honored: a category or pickup spot still
-referenced cannot be deleted (`ON DELETE RESTRICT`); these constraints are
-enforced in both the data layer and the database.
+captured at write time and preserved thereafter so historical orders survive
+later product or pickup-spot edits. Referential-integrity rules MUST be honored: a
+category or pickup spot still referenced cannot be deleted (`ON DELETE RESTRICT`);
+these constraints are enforced in both the data layer and the database.
 
-Rationale: Orders are financial records of past transactions; mutating them or
-breaking their snapshots would falsify history.
+Rationale: Orders are financial records of past transactions; editing or deleting
+existing rows or breaking their snapshots would falsify history, whereas appending
+new orders adds to the record without rewriting it.
 
 ## Technology Constraints
 
@@ -143,4 +132,4 @@ wins.
   for agents and contributors lives in `CLAUDE.md` and MUST stay consistent with
   this constitution.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-27
+**Version**: 1.1.1 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-28

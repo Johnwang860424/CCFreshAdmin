@@ -32,7 +32,7 @@ CC 生鮮 (CC Fresh) admin backend. A Next.js App Router app backed by **Neon Po
 
 - `auth.ts` is the single NextAuth config, exporting `handlers / auth / signIn / signOut`.
 - `app/api/auth/[...nextauth]/route.ts` re-exports `handlers` as `GET/POST`.
-- **`proxy.ts` is the middleware** — Next.js 16 renamed `middleware` to `proxy`. It re-exports `auth as proxy` and its `config.matcher` guards every route except `api`, static assets, and favicon. The `authorized` callback in `auth.ts` does the optimistic cookie-only check (redirects unauthenticated users to `/login`).
+- **`proxy.ts` is the middleware** — Next.js 16 renamed `middleware` to `proxy`. It re-exports `auth as proxy` and its `config.matcher` guards every route except `/api/auth` (NextAuth endpoints), static assets, and favicon (thus, other `/api/*` routes are covered by the middleware). The `authorized` callback in `auth.ts` does the optimistic cookie-only check (redirects unauthenticated users to `/login`).
 - The `signIn` callback enforces an **email allowlist** (`ALLOWED_EMAILS`). Empty allowlist = nobody can log in (deny-by-default).
 - Route group `app/(admin)/` holds all protected pages; `app/(admin)/layout.tsx` calls `auth()` server-side and renders `AdminShell` (client sidebar/header in `app/components/admin-shell.tsx`).
 
@@ -50,7 +50,7 @@ Schema lives in `db/schema.sql` (run once against Neon). Tables: `products`, `pi
 
 ## API routes & image lifecycle
 
-REST handlers under `app/api/{products,pickup-spots}/` (collection `route.ts` for GET/POST, `[rowIndex]/route.ts` for PUT/DELETE) and `app/api/upload/` (POST upload, DELETE remove). Note routes are excluded from the proxy matcher — they are **not** auth-guarded by middleware.
+REST handlers under `app/api/{products,pickup-spots}/` (collection `route.ts` for GET/POST, `[rowIndex]/route.ts` for PUT/DELETE) and `app/api/upload/` (POST upload, DELETE remove). Note that while these `/api/*` routes (except `/api/auth`) are matched by the proxy middleware and thus auth-guarded globally, mutating or sensitive endpoints should still validate authorization explicitly (`auth()`) as a defense-in-depth practice.
 
 Image cleanup is coordinated to avoid orphans:
 - Product update (`PUT`) deletes the old Cloudinary image only if it changed.

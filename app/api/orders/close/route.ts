@@ -47,6 +47,7 @@ export const POST = jsonHandler(async (request) => {
   const header = [
     "取貨號",
     "客戶姓名",
+    "來源",
     "取貨地點",
     "購買清單",
     "訂單總額",
@@ -57,6 +58,7 @@ export const POST = jsonHandler(async (request) => {
   const rows = orders.map((order) => [
     order.pickupNumber ?? "",
     order.customerName,
+    order.tag,
     // 取貨地點：自取帶入鄉鎮（不含縣市），宅配帶入收件地址
     order.deliveryMethod === "delivery"
       ? (order.shippingAddress ?? "")
