@@ -5,6 +5,7 @@ import {
   Card,
   Table,
   Select,
+  DatePicker,
   Button,
   Space,
   Spin,
@@ -14,59 +15,88 @@ import {
 } from "antd";
 import { ReloadOutlined, DownloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import type { CityOrderMatrix } from "@/app/lib/orders";
+import dayjs, { type Dayjs } from "dayjs";
+import type { RouteOrderMatrix } from "@/app/lib/orders";
+import type { RouteRow } from "@/app/lib/routes";
 import { fetchJson, downloadBlob } from "@/app/lib/api-client";
 import { buildCsv } from "@/app/lib/csv";
 import { PageHeader } from "@/app/components/page-header";
 
 const { Text } = Typography;
+const { RangePicker } = DatePicker;
 
-type MatrixRow = CityOrderMatrix["rows"][number];
+type MatrixRow = RouteOrderMatrix["rows"][number];
+
+/** 路線下拉的特殊值：全部路線 / 未分路線。 */
+const ALL = "all";
+const UNASSIGNED = "unassigned";
 
 export default function OrderSummaryPage() {
-  const [cities, setCities] = useState<string[]>([]);
-  const [city, setCity] = useState<string | undefined>();
-  const [matrix, setMatrix] = useState<CityOrderMatrix | null>(null);
-  const [citiesLoading, setCitiesLoading] = useState(true);
+  const [routes, setRoutes] = useState<RouteRow[]>([]);
+  const [route, setRoute] = useState<string>(ALL);
+  const [range, setRange] = useState<[Dayjs, Dayjs] | null>([
+    dayjs(),
+    dayjs(),
+  ]);
+  const [matrix, setMatrix] = useState<RouteOrderMatrix | null>(null);
+  const [routesLoading, setRoutesLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
 
-  const fetchCities = useCallback(async () => {
-    setCitiesLoading(true);
+  // 全部路線且未指定日期 → 兩條件皆缺，不執行查詢（擇一必填）。
+  const noCriteria = route === ALL && !range;
+
+  const fetchRoutes = useCallback(async () => {
+    setRoutesLoading(true);
     try {
-      const data = await fetchJson<{ cities: string[] }>("/api/orders/summary");
-      setCities(data.cities);
+      const data = await fetchJson<{ routes: { id: number; name: string }[] }>(
+        "/api/orders/summary",
+      );
+      setRoutes(data.routes as RouteRow[]);
     } catch {
-      messageApi.error("讀取縣市清單失敗");
+      messageApi.error("讀取路線清單失敗");
     } finally {
-      setCitiesLoading(false);
+      setRoutesLoading(false);
     }
   }, [messageApi]);
 
-  const fetchMatrix = useCallback(
-    async (target: string) => {
-      setLoading(true);
-      try {
-        setMatrix(
-          await fetchJson<CityOrderMatrix>(
-            `/api/orders/summary?city=${encodeURIComponent(target)}`,
-          ),
-        );
-      } catch {
-        messageApi.error("讀取訂單統計失敗");
-      } finally {
-        setLoading(false);
+  const fetchMatrix = useCallback(async () => {
+    if (noCriteria) {
+      setMatrix(null);
+      return;
+    }
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ route });
+      if (range) {
+        params.set("from", range[0].format("YYYY-MM-DD"));
+        params.set("to", range[1].format("YYYY-MM-DD"));
       }
-    },
-    [messageApi],
-  );
+      setMatrix(
+        await fetchJson<RouteOrderMatrix>(
+          `/api/orders/summary?${params.toString()}`,
+        ),
+      );
+    } catch {
+      messageApi.error("讀取訂單統計失敗");
+    } finally {
+      setLoading(false);
+    }
+  }, [route, range, noCriteria, messageApi]);
+
+  /** 目前條件對應的顯示名稱（標題/檔名用）。 */
+  const routeLabel = useMemo(() => {
+    if (route === ALL) return "全部路線";
+    if (route === UNASSIGNED) return "未分路線";
+    return routes.find((r) => String(r.id) === route)?.name ?? "路線";
+  }, [route, routes]);
 
   const handleDownloadCsv = useCallback(() => {
     if (!matrix || matrix.rows.length === 0) return;
 
-    const header = ["地點", ...matrix.products];
+    const header = ["取貨點", ...matrix.products];
     const bodyRows = matrix.rows.map((row) => [
-      row.township,
+      row.label,
       ...matrix.products.map((product) => row.quantities[product] ?? 0),
     ]);
     const totalRow = [
@@ -76,27 +106,29 @@ export default function OrderSummaryPage() {
 
     const csv = buildCsv([header, ...bodyRows, totalRow]);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    downloadBlob(blob, `訂單統計_${matrix.city}.csv`);
-  }, [matrix]);
+    const dateLabel = range
+      ? `${range[0].format("YYYYMMDD")}-${range[1].format("YYYYMMDD")}`
+      : "全部日期";
+    downloadBlob(blob, `訂單統計_${routeLabel}_${dateLabel}.csv`);
+  }, [matrix, range, routeLabel]);
 
   useEffect(() => {
-    fetchCities();
-  }, [fetchCities]);
+    fetchRoutes();
+  }, [fetchRoutes]);
 
   useEffect(() => {
-    if (city) fetchMatrix(city);
-    else setMatrix(null);
-  }, [city, fetchMatrix]);
+    fetchMatrix();
+  }, [fetchMatrix]);
 
   const columns = useMemo<ColumnsType<MatrixRow>>(() => {
     if (!matrix) return [];
     return [
       {
-        title: "地點",
-        dataIndex: "township",
-        key: "township",
+        title: "取貨點",
+        dataIndex: "label",
+        key: "label",
         fixed: "left",
-        width: 120,
+        width: 160,
         render: (v: string) => <Text strong>{v}</Text>,
       },
       ...matrix.products.map((product) => ({
@@ -108,32 +140,44 @@ export default function OrderSummaryPage() {
     ];
   }, [matrix]);
 
+  const routeOptions = [
+    { label: "全部路線", value: ALL },
+    ...routes.map((r) => ({ label: r.name, value: String(r.id) })),
+    { label: "未分路線", value: UNASSIGNED },
+  ];
+
   return (
     <>
       {contextHolder}
       <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
-          title="縣市訂單統計"
+          title="路線訂單統計"
           actions={
             <Space wrap>
               <Select
-                placeholder="選擇縣市"
-                className="w-full sm:w-[200px]"
-                value={city}
-                onChange={setCity}
-                loading={citiesLoading}
-                options={cities.map((c) => ({ label: c, value: c }))}
-                notFoundContent={
-                  citiesLoading ? <Spin size="small" /> : "目前沒有自取訂單"
+                showSearch={{
+                  optionFilterProp: 'label'
+                }}
+                className="w-full sm:w-[180px]"
+                value={route}
+                onChange={setRoute}
+                loading={routesLoading}
+                options={routeOptions}
+              />
+              <RangePicker
+                value={range}
+                onChange={(v) =>
+                  setRange(v && v[0] && v[1] ? [v[0], v[1]] : null)
                 }
-                showSearch
+                allowClear
+                className="w-full sm:w-auto"
               />
               <Button
                 icon={<ReloadOutlined />}
-                loading={citiesLoading || loading}
+                loading={routesLoading || loading}
                 onClick={() => {
-                  fetchCities();
-                  if (city) fetchMatrix(city);
+                  fetchRoutes();
+                  fetchMatrix();
                 }}
               >
                 重新載入
@@ -149,20 +193,20 @@ export default function OrderSummaryPage() {
           }
         />
 
-        {!city ? (
+        {noCriteria ? (
           <Empty
-            description="請先選擇縣市以查詢訂單統計"
+            description="請至少指定路線或日期以查詢訂單統計"
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           />
         ) : (
           <Spin spinning={loading}>
             <Table
-              rowKey="township"
+              rowKey="pickupSpotId"
               columns={columns}
               dataSource={matrix?.rows ?? []}
               pagination={false}
               scroll={{ x: "max-content" }}
-              locale={{ emptyText: "此縣市目前沒有訂單" }}
+              locale={{ emptyText: "此條件目前沒有訂單" }}
               summary={() => {
                 if (!matrix || matrix.rows.length === 0) return null;
                 return (

@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import {
   deletePickupSpot,
+  updatePickupSpot,
   updatePickupSpotTownship,
   PickupSpotInUseError,
   PickupSpotDuplicateError,
 } from "@/app/lib/pickup-spots";
 import { jsonHandler } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
-import { parseId } from "@/app/lib/validation";
+import { parseId, parseRouteId } from "@/app/lib/validation";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -17,15 +18,27 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
   if ("error" in parsed) return parsed.error;
   const { id } = parsed;
 
-  // 僅接受 township；任何傳入的 city 一律忽略（所屬縣市不可更改）。
-  const { township } = (await request.json()) as { township?: string };
-  const value = typeof township === "string" ? township.trim() : "";
+  // 接受 township（必填）與選用 routeId；任何傳入的 city 一律忽略（所屬縣市不可更改）。
+  // 僅在請求帶有 routeId 欄位時才更新所屬路線（路線管理頁）；否則只改地點（自取點管理頁，路線唯讀）。
+  const body = (await request.json()) as {
+    township?: string;
+    routeId?: number | null;
+  };
+  const value = typeof body.township === "string" ? body.township.trim() : "";
   if (!value) {
     return NextResponse.json({ error: "地點為必填欄位" }, { status: 400 });
   }
 
+  const hasRoute = "routeId" in body;
+  const route = parseRouteId(body.routeId);
+  if (hasRoute && "error" in route) return route.error;
+
   try {
-    await updatePickupSpotTownship(id, value);
+    if (hasRoute) {
+      await updatePickupSpot(id, value, "value" in route ? route.value : null);
+    } else {
+      await updatePickupSpotTownship(id, value);
+    }
   } catch (err) {
     if (err instanceof PickupSpotDuplicateError) {
       return NextResponse.json({ error: err.message }, { status: 409 });

@@ -22,7 +22,10 @@ import {
   Popconfirm,
   message,
   Spin,
+  Tag,
   Typography,
+  Tabs,
+  Badge,
 } from "antd";
 import {
   PlusOutlined,
@@ -148,12 +151,12 @@ export default function PickupSpotsPage() {
     fetchData();
   }, [fetchData]);
 
-  // 取得目前有自取點的所有縣市，並依照 API 回來的城市順序
+  // 取得目前有自取點的所有縣市，依照 API 回來的城市順序。
   const activeCities = useMemo(() => {
     return Array.from(new Set(data.map((item) => item.city)));
   }, [data]);
 
-  // 當載入資料後，若目前的 activeTab 不在有資料的縣市中，自動切換至第一個有資料的縣市
+  // 當載入資料後，若目前的 activeTab 不在有資料的縣市中，自動切換至第一個有資料的縣市。
   useEffect(() => {
     if (activeCities.length > 0) {
       const hasActiveTab = activeCities.includes(activeTab);
@@ -168,7 +171,10 @@ export default function PickupSpotsPage() {
   useEffect(() => {
     if (!modalOpen) return;
     if (editing) {
-      form.setFieldsValue({ city: editing.city, township: editing.township });
+      form.setFieldsValue({
+        city: editing.city,
+        township: editing.township,
+      });
     } else {
       form.resetFields();
       if (activeTab) {
@@ -180,7 +186,6 @@ export default function PickupSpotsPage() {
   const spotsInActiveTab = useMemo(() => {
     return data.filter((item) => item.city === activeTab);
   }, [data, activeTab]);
-
 
   const openModal = (record?: PickupSpot) => {
     setEditing(record ?? null);
@@ -202,7 +207,7 @@ export default function PickupSpotsPage() {
     try {
       setSaving(true);
       if (editing) {
-        // 僅送 township；縣市不可更改。
+        // 縣市不可更改；此頁僅改地點，所屬路線於「路線管理」頁調整（不送 routeId）。
         await putJson(`/api/pickup-spots/${editing.id}`, {
           township: values.township,
         });
@@ -244,7 +249,7 @@ export default function PickupSpotsPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
 
-  // 只在「目前選擇縣市內」調整順序並即時樂觀儲存。
+  // 只在「目前選擇縣市內」調整順序並即時樂觀儲存（此排序供前台顧客選點使用）。
   const handleDragEnd = async ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
 
@@ -287,6 +292,18 @@ export default function PickupSpotsPage() {
       ),
     },
     {
+      title: "所屬路線",
+      dataIndex: "routeName",
+      key: "routeName",
+      width: 160,
+      render: (routeName: string | null) =>
+        routeName ? (
+          <Tag color="blue">{routeName}</Tag>
+        ) : (
+          <Tag>未分路線</Tag>
+        ),
+    },
+    {
       title: "操作",
       key: "actions",
       width: 120,
@@ -312,7 +329,7 @@ export default function PickupSpotsPage() {
     },
   ];
 
-  // 排序模式：把手在前、隱藏「縣市」與「操作」欄，避免拖拉時誤觸。
+  // 排序模式：把手在前、隱藏「操作」欄，避免拖拉時誤觸。
   const sortColumns: ColumnsType<PickupSpot> = [
     {
       title: "排序",
@@ -326,6 +343,14 @@ export default function PickupSpotsPage() {
       dataIndex: "township",
       key: "township",
       render: (township: string) => <Text>{township}</Text>,
+    },
+    {
+      title: "所屬路線",
+      dataIndex: "routeName",
+      key: "routeName",
+      width: 160,
+      render: (routeName: string | null) =>
+        routeName ? <Tag color="blue">{routeName}</Tag> : <Tag>未分路線</Tag>,
     },
   ];
 
@@ -380,46 +405,33 @@ export default function PickupSpotsPage() {
           }
         />
 
-        {/* Custom Premium Tabs */}
+        {/* 縣市分組 Tabs（此排序供前台顧客選點使用） */}
         {activeCities.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-6 p-1.5 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-800/80">
-            {activeCities.map((city) => {
-              const count = data.filter((item) => item.city === city).length;
-              const isActive = activeTab === city;
-              return (
-                <button
-                  key={city}
-                  disabled={sortMode}
-                  onClick={() => setActiveTab(city)}
-                  className={`
-                    flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 select-none
-                    ${sortMode ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-                    ${
-                      isActive
-                        ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm border border-slate-100 dark:border-slate-700/50 scale-[1.02]"
-                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-white/50 dark:hover:bg-slate-800/30"
-                    }
-                  `}
-                >
-                  <EnvironmentOutlined
-                    className={`text-xs transition-colors duration-200 ${isActive ? "text-blue-500" : "text-slate-400"}`}
-                  />
-                  <span>{city}</span>
-                  <span
-                    className={`
-                      inline-flex items-center justify-center px-2 py-0.5 text-xs font-semibold rounded-full transition-all duration-200
-                      ${
-                        isActive
-                          ? "bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400"
-                          : "bg-slate-200/60 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400"
-                      }
-                    `}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="mb-6">
+            <Tabs
+              activeKey={activeTab}
+              onChange={setActiveTab}
+              items={activeCities.map((city) => {
+                const count = data.filter((item) => item.city === city).length;
+                return {
+                  key: city,
+                  disabled: sortMode,
+                  label: (
+                    <Space size="small">
+                      <EnvironmentOutlined
+                        style={{
+                          color: activeTab === city ? "#1677ff" : "inherit",
+                        }}
+                      />
+                      <span>{city}</span>
+                      <Badge count={count}
+                        color={activeTab === city ? "#1677ff" : "#000000ff"}
+                      />
+                    </Space>
+                  ),
+                };
+              })}
+            />
           </div>
         )}
         <Spin spinning={loading}>
@@ -476,10 +488,11 @@ export default function PickupSpotsPage() {
             rules={[{ required: true, message: "請選擇縣市" }]}
           >
             <Select
-              showSearch
+              showSearch={{
+                optionFilterProp: 'label'
+              }}
               placeholder="請選擇縣市"
               options={cityOptions}
-              optionFilterProp="label"
               disabled={!!editing}
             />
           </Form.Item>

@@ -4,7 +4,7 @@ CC 生鮮 (CC Fresh) 後台管理系統。管理員透過此後台維護取貨�
 
 > 訂單與訂單明細由外部顧客端應用寫入，本後台僅負責讀取、匯出 (結單 CSV) 與清除。
 
-## 技術棧
+## 技術架構
 
 - **Next.js 16.2.4 / React 19 / TypeScript (strict)** — App Router，路徑別名 `@/*` → 專案根目錄。
 - **antd v6** — 全部 UI，透過 `@ant-design/nextjs-registry` 處理 SSR 樣式。互動頁面皆為 `"use client"`。

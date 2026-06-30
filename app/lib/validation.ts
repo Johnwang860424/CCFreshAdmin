@@ -7,6 +7,7 @@ export const MAX_LEN = {
   spec: 100,
   description: 100,
   categoryName: 50,
+  routeName: 50,
 } as const;
 
 /** 解析並驗證路由的 `id` 參數為正整數，失敗時回傳 400 response。 */
@@ -24,6 +25,20 @@ export function parseId(
 
 function badRequest(message: string): { error: NextResponse } {
   return { error: NextResponse.json({ error: message }, { status: 400 }) };
+}
+
+/**
+ * 解析取貨點所屬路線 id：null/undefined → null（未分路線）；正整數 → 該 id；
+ * 其餘（字串、0、負數、非整數）→ 400。
+ */
+export function parseRouteId(
+  routeId: unknown,
+): { value: number | null } | { error: NextResponse } {
+  if (routeId === null || routeId === undefined) return { value: null };
+  if (Number.isInteger(routeId) && (routeId as number) > 0) {
+    return { value: routeId as number };
+  }
+  return badRequest("無效的路線");
 }
 
 /**
@@ -49,6 +64,7 @@ export function validateReorderBody(
 /**
  * 驗證自取點「單一縣市」排序請求：`city` 非空字串，`ids` 須為非空、皆正整數、不重複的陣列。
  * 回傳已驗證的 `{ city, ids }`（ids 代表該縣市期望的由前到後完整順序）。
+ * 此排序供前台顧客選取貨點使用，故維持以縣市分群。
  */
 export function validatePickupReorderBody(
   body: unknown,

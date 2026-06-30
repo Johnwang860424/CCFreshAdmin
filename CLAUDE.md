@@ -10,7 +10,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## Commands
 
-- `npm run dev` — start dev server (http://localhost:3000)
+- `npm run dev` — start dev server
 - `npm run build` — production build
 - `npm run start` — serve production build
 - `npm run lint` — ESLint (flat config, `eslint.config.mjs`)
@@ -19,7 +19,7 @@ No test framework is configured.
 
 ## What this is
 
-CC 生鮮 (CC Fresh) admin backend. A Next.js App Router app backed by **Neon Postgres**, queried with raw SQL via `@neondatabase/serverless`. Admins manage pickup spots and products; product images live in Cloudinary. UI is Traditional Chinese (`zh-TW`).
+CC 生鮮 (CC Fresh) admin backend. A Next.js App Router app backed by **Neon Postgres**, queried with raw SQL via `@neondatabase/serverless`. Admins manage delivery routes, pickup spots, product categories and products; product images live in Cloudinary. UI is Traditional Chinese (`zh-TW`).
 
 ## Stack & key conventions
 
@@ -38,19 +38,20 @@ CC 生鮮 (CC Fresh) admin backend. A Next.js App Router app backed by **Neon Po
 
 ## Data layer
 
-`app/lib/db.ts` exports `sql`, the Neon serverless HTTP client (`neon(process.env.DATABASE_URL!)`). Use it as a tagged template — interpolations are auto-parameterized, so never string-concat user input. One module per entity wraps the queries: `app/lib/products.ts`, `app/lib/pickup-spots.ts`.
+`app/lib/db.ts` exports `sql`, the Neon serverless HTTP client (`neon(process.env.DATABASE_URL!)`). Use it as a tagged template — interpolations are auto-parameterized, so never string-concat user input. One module per entity wraps the queries: `app/lib/products.ts`, `app/lib/categories.ts`, `app/lib/routes.ts`, `app/lib/pickup-spots.ts`, `app/lib/orders.ts`.
 
-Schema lives in `db/schema.sql` (run once against Neon). Tables: `products`, `pickup_spots`, `orders`, `order_items`.
+Schema lives in `db/schema.sql` (run once against Neon); incremental changes are one-off scripts in `db/migrations/` (also applied manually in the Neon SQL Editor). Tables: `categories`, `products`, `routes`, `pickup_spots`, `orders`, `order_items`.
 
 - **Identity is the serial `id`** column (the API route segment is `[id]`, antd table `rowKey="id"`). Data modules return `id`, not a row index.
 - `products.price` is `INTEGER` (NT$ whole dollars). API routes coerce/validate (`Number.isInteger`, non-negative); the product form additionally enforces an integer pattern. Data modules pass/return `price` as `number`.
-- `orders` / `order_items` are **written by an external customer-facing app** (out of this repo's scope); this admin only reads, exports (結單 CSV), and clears them (`orders/page.tsx`, `order-summary/page.tsx`, `app/api/orders/*`). Order/item rows snapshot `product_name` / `unit_price` / `promo_*` / `subtotal` so historical orders survive later product/pickup-spot edits. FKs: `order_items.product_id` is `ON DELETE SET NULL`; `products.category_id` and `orders.pickup_spot_id` are `ON DELETE RESTRICT` (a category/pickup-spot still referenced cannot be deleted — enforced in the data layer / DB); `order_items → orders` is `ON DELETE CASCADE`.
+- **Pickup spots & delivery routes**: each `pickup_spots` row optionally belongs to a `routes` row via nullable `route_id` (NULL = 未分路線 / unassigned). Pickup-spot `sort_order` is **city-scoped** — it drives the customer-facing front end's spot ordering, so it stays grouped by city even though admin order operations (統計 / 篩選 / 結單) group by **route**. Route assignment is edited on the 路線管理 page (`routes/page.tsx`); the 自取點管理 page (`pickup-spots/page.tsx`) shows the route read-only. An order's route is derived live via `orders → pickup_spots → routes` (no snapshot); 宅配 (delivery) and 未分路線 are built-in groups.
+- `orders` / `order_items` are **written by an external customer-facing app** (out of this repo's scope); this admin only reads, exports (結單 CSV), and clears them (`orders/page.tsx`, `order-summary/page.tsx`, `app/api/orders/*`). Order/item rows snapshot `product_name` / `unit_price` / `promo_*` / `subtotal` so historical orders survive later product/pickup-spot edits. FKs: `order_items.product_id` is `ON DELETE SET NULL`; `products.category_id`, `orders.pickup_spot_id` and `pickup_spots.route_id` are `ON DELETE RESTRICT` (a category/pickup-spot/route still referenced cannot be deleted — enforced in the data layer / DB); `order_items → orders` is `ON DELETE CASCADE`.
 
 `app/lib/cloudinary.ts` handles image upload/delete; uploads go to the `CC` folder. `deleteCloudinaryImage` parses the public ID back out of a secure URL — keep image URLs in Cloudinary's standard `/upload/...` form or that regex breaks.
 
 ## API routes & image lifecycle
 
-REST handlers under `app/api/{products,pickup-spots}/` (collection `route.ts` for GET/POST, `[rowIndex]/route.ts` for PUT/DELETE) and `app/api/upload/` (POST upload, DELETE remove). Note that while these `/api/*` routes (except `/api/auth`) are matched by the proxy middleware and thus auth-guarded globally, mutating or sensitive endpoints should still validate authorization explicitly (`auth()`) as a defense-in-depth practice.
+REST handlers under `app/api/{products,categories,routes,pickup-spots,orders}/` (collection `route.ts` for GET/POST, `[id]/route.ts` for PUT/DELETE; plus sub-routes like `pickup-spots/reorder`, `products/reorder`, `orders/close`, `orders/summary`) and `app/api/upload/` (POST upload, DELETE remove). Note that while these `/api/*` routes (except `/api/auth`) are matched by the proxy middleware and thus auth-guarded globally, mutating or sensitive endpoints should still validate authorization explicitly (`auth()`) as a defense-in-depth practice.
 
 Image cleanup is coordinated to avoid orphans:
 - Product update (`PUT`) deletes the old Cloudinary image only if it changed.
