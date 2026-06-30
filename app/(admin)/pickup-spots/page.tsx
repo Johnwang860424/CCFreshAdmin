@@ -148,12 +148,9 @@ export default function PickupSpotsPage() {
     fetchData();
   }, [fetchData]);
 
-  // 取得目前有自取點的所有縣市，並依照 TAIWAN_LOCATIONS 的既定順序排序
+  // 取得目前有自取點的所有縣市，並依照 API 回來的城市順序
   const activeCities = useMemo(() => {
-    const citiesWithData = Array.from(new Set(data.map((item) => item.city)));
-    return (TAIWAN_LOCATIONS as readonly string[]).filter((city) =>
-      citiesWithData.includes(city)
-    );
+    return Array.from(new Set(data.map((item) => item.city)));
   }, [data]);
 
   // 當載入資料後，若目前的 activeTab 不在有資料的縣市中，自動切換至第一個有資料的縣市
