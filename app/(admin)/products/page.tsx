@@ -636,9 +636,10 @@ export default function ProductsPage() {
             rules={[{ required: true, message: "請選擇分類" }]}
           >
             <Select
-              showSearch
+              showSearch={{
+                optionFilterProp: 'label'
+              }}
               placeholder="請選擇分類"
-              optionFilterProp="label"
               options={categories.map((c) => ({ label: c.name, value: c.id }))}
             />
           </Form.Item>

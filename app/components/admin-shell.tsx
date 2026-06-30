@@ -12,6 +12,7 @@ import {
   EnvironmentOutlined,
   AppstoreOutlined,
   BarChartOutlined,
+  NodeIndexOutlined,
   MenuOutlined,
 } from "@ant-design/icons";
 
@@ -20,9 +21,10 @@ const { Text } = Typography;
 
 const menuItems = [
   { key: "/pickup-spots", icon: <EnvironmentOutlined />, label: "自取點管理" },
+  { key: "/routes", icon: <NodeIndexOutlined />, label: "路線管理" },
   { key: "/categories", icon: <AppstoreOutlined />, label: "分類管理" },
   { key: "/products", icon: <ShopOutlined />, label: "商品管理" },
-  { key: "/order-summary", icon: <BarChartOutlined />, label: "縣市訂單統計" },
+  { key: "/order-summary", icon: <BarChartOutlined />, label: "路線訂單統計" },
   { key: "/orders", icon: <ShoppingCartOutlined />, label: "訂單管理" },
 ];
 

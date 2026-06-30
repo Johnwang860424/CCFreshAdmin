@@ -1,15 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.1.0 → 1.1.1
-Bump rationale: Principle III clarified to reflect that /api/* routes (except /api/auth) are in the proxy matcher, but explicit auth verification in handlers is still required for defense-in-depth → PATCH.
+Version change: 1.1.1 → 1.1.2
+Bump rationale: Principle V's referential-integrity enumeration extended to the new delivery-route grouping (routes table + pickup_spots.route_id ON DELETE RESTRICT). Clarification of scope to an existing rule → PATCH.
 
 Modified principles:
-  - III. Deny-by-Default Authorization (clarified matcher coverage and rationale for explicit verification)
+  - V. Order History Is Immutable (added delivery route to the ON DELETE RESTRICT enumeration)
 
 Added sections: none
 
 Removed sections: none
+
+Notes: CLAUDE.md updated in the same change to list the routes/categories/orders data modules, the categories/routes tables, db/migrations, and the route_id FK.
 -->
 
 # CC 生鮮 (CC Fresh) Admin Constitution
@@ -76,8 +78,10 @@ MUST insert new `orders`/`order_items` rows rather than mutating existing ones.
 Snapshotted columns (`product_name`, `unit_price`, `promo_*`, `subtotal`) MUST be
 captured at write time and preserved thereafter so historical orders survive
 later product or pickup-spot edits. Referential-integrity rules MUST be honored: a
-category or pickup spot still referenced cannot be deleted (`ON DELETE RESTRICT`);
-these constraints are enforced in both the data layer and the database.
+category still referenced by products, a pickup spot still referenced by orders, or
+a delivery route still referenced by pickup spots cannot be deleted
+(`ON DELETE RESTRICT`); these constraints are enforced in both the data layer and the
+database.
 
 Rationale: Orders are financial records of past transactions; editing or deleting
 existing rows or breaking their snapshots would falsify history, whereas appending
@@ -132,4 +136,4 @@ wins.
   for agents and contributors lives in `CLAUDE.md` and MUST stay consistent with
   this constitution.
 
-**Version**: 1.1.1 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-06-28
+**Version**: 1.1.2 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-07-01

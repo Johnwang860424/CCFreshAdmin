@@ -37,7 +37,6 @@ import {
 import type {
   OrderRow as Order,
   OrderItemRow as OrderItem,
-  OrderLocation,
   CloseGroupSummary as CloseGroup,
 } from "@/app/lib/orders";
 import type { ProductRow } from "@/app/lib/products";
@@ -59,8 +58,9 @@ function describePromo(
   return strategy.describe(promoConfig);
 }
 
-/** 縣市下拉選單中代表「宅配」的特殊值（宅配無結構化縣市，故獨立成一個選項） */
-const DELIVERY_CITY = "__delivery__";
+/** 路線篩選下拉的特殊值：宅配（無取貨點/路線）、未分路線（取貨點未指定路線）。 */
+const DELIVERY = "__delivery__";
+const UNASSIGNED = "unassigned";
 
 /** 來源標籤選項（與後端 ORDER_TAGS 對應）；預設「網站」。 */
 const TAG_OPTIONS = ["網站", "FB", "Line"] as const;
@@ -91,11 +91,11 @@ interface CreateOrderFormValues {
 }
 
 export default function OrdersPage() {
-  const [locations, setLocations] = useState<OrderLocation[]>([]);
+  const [routes, setRoutes] = useState<{ id: number; name: string }[]>([]);
+  const [hasUnassigned, setHasUnassigned] = useState(false);
   const [hasDelivery, setHasDelivery] = useState(false);
-  const [locationsLoading, setLocationsLoading] = useState(true);
-  const [city, setCity] = useState<string | undefined>();
-  const [township, setTownship] = useState<string | undefined>();
+  const [routesLoading, setRoutesLoading] = useState(true);
+  const [selected, setSelected] = useState<string | undefined>();
   const [data, setData] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -160,35 +160,37 @@ export default function OrdersPage() {
     form.resetFields();
   }, [form]);
 
-  // 進到畫面時僅取得有訂單的縣市/鄉鎮清單，不載入全部訂單
-  const fetchLocations = useCallback(async () => {
-    setLocationsLoading(true);
+  // 進到畫面時僅取得有訂單的路線清單（含未分路線/宅配旗標），不載入全部訂單。
+  const fetchRouteOptions = useCallback(async () => {
+    setRoutesLoading(true);
     try {
       const data = await fetchJson<{
-        locations: OrderLocation[];
+        routes: { id: number; name: string }[];
+        hasUnassigned: boolean;
         hasDelivery: boolean;
       }>("/api/orders");
-      setLocations(data.locations);
+      setRoutes(data.routes);
+      setHasUnassigned(data.hasUnassigned);
       setHasDelivery(data.hasDelivery);
     } catch {
-      messageApi.error("讀取縣市/地點清單失敗");
+      messageApi.error("讀取路線清單失敗");
     } finally {
-      setLocationsLoading(false);
+      setRoutesLoading(false);
     }
   }, [messageApi]);
 
-  // 依選定的縣市（可再加鄉鎮）查詢訂單
+  // 依選定的路線（含未分路線/宅配）查詢訂單。
   const fetchOrders = useCallback(
-    async (targetCity: string, targetTownship?: string) => {
+    async (target: string) => {
       setLoading(true);
       try {
         let url: string;
-        if (targetCity === DELIVERY_CITY) {
+        if (target === DELIVERY) {
           url = "/api/orders?method=delivery";
+        } else if (target === UNASSIGNED) {
+          url = "/api/orders?route=unassigned";
         } else {
-          const params = new URLSearchParams({ city: targetCity });
-          if (targetTownship) params.set("township", targetTownship);
-          url = `/api/orders?${params.toString()}`;
+          url = `/api/orders?route=${encodeURIComponent(target)}`;
         }
         setData(await fetchJson<Order[]>(url));
       } catch {
@@ -242,30 +244,25 @@ export default function OrdersPage() {
       messageApi.success("訂單已新增");
       setCreateOpen(false);
       form.resetFields();
-      // 重新整理縣市/地點清單；若目前正檢視某縣市，連同訂單一起刷新。
-      fetchLocations();
-      if (city) fetchOrders(city, township);
+      // 重新整理路線清單；若目前正檢視某分組，連同訂單一起刷新。
+      fetchRouteOptions();
+      if (selected) fetchOrders(selected);
     } catch (err) {
       messageApi.error(err instanceof Error ? err.message : "新增訂單失敗");
     } finally {
       setCreating(false);
     }
-  }, [form, messageApi, fetchLocations, fetchOrders, city, township]);
+  }, [form, messageApi, fetchRouteOptions, fetchOrders, selected]);
 
   useEffect(() => {
-    fetchLocations();
-  }, [fetchLocations]);
+    fetchRouteOptions();
+  }, [fetchRouteOptions]);
 
-  // 縣市/鄉鎮變動時查詢；未選縣市則清空結果
+  // 選定路線變動時查詢；未選則清空結果
   useEffect(() => {
-    if (city) fetchOrders(city, township);
+    if (selected) fetchOrders(selected);
     else setData([]);
-  }, [city, township, fetchOrders]);
-
-  const townshipOptions = useMemo(
-    () => locations.find((l) => l.city === city)?.townships ?? [],
-    [locations, city],
-  );
+  }, [selected, fetchOrders]);
 
   const openCloseModal = () => {
     setCloseModalOpen(true);
@@ -286,7 +283,7 @@ export default function OrdersPage() {
   const closeGroup = async (group: CloseGroup) => {
     const body = JSON.stringify({
       method: group.method,
-      pickupSpotId: group.pickupSpotId,
+      routeId: group.routeId,
     });
     const filename = safeFilename(
       `orders_${group.display}_${taipeiDateStamp()}.csv`,
@@ -295,8 +292,8 @@ export default function OrdersPage() {
     const refresh = () =>
       Promise.all([
         fetchCloseGroups(),
-        fetchLocations(),
-        city ? fetchOrders(city, township) : Promise.resolve(),
+        fetchRouteOptions(),
+        selected ? fetchOrders(selected) : Promise.resolve(),
       ]);
 
     setClosing(true);
@@ -437,6 +434,11 @@ export default function OrdersPage() {
             {record.pickupSpotLabel}
           </Descriptions.Item>
         )}
+        {record.routeName && (
+          <Descriptions.Item label="路線">
+            {record.routeName}
+          </Descriptions.Item>
+        )}
         {record.note && (
           <Descriptions.Item label="備註">{record.note}</Descriptions.Item>
         )}
@@ -523,34 +525,29 @@ export default function OrdersPage() {
                 新增訂單
               </Button>
               <Select
-                placeholder="選擇縣市"
-                className="w-full sm:w-40"
-                value={city}
-                onChange={(value) => {
-                  setCity(value);
-                  setTownship(undefined);
-                }}
-                loading={locationsLoading}
+                placeholder="選擇路線"
+                className="w-full sm:w-44"
+                value={selected}
+                onChange={setSelected}
+                loading={routesLoading}
                 options={[
-                  ...(hasDelivery
-                    ? [{ label: "宅配", value: DELIVERY_CITY }]
+                  ...routes.map((r) => ({
+                    label: r.name,
+                    value: String(r.id),
+                  })),
+                  ...(hasUnassigned
+                    ? [{ label: "未分路線", value: UNASSIGNED }]
                     : []),
-                  ...locations.map((l) => ({ label: l.city, value: l.city })),
+                  ...(hasDelivery
+                    ? [{ label: "宅配", value: DELIVERY }]
+                    : []),
                 ]}
                 notFoundContent={
-                  locationsLoading ? <Spin size="small" /> : "目前沒有訂單"
+                  routesLoading ? <Spin size="small" /> : "目前沒有訂單"
                 }
-                showSearch
-                allowClear
-              />
-              <Select
-                placeholder="選擇地點（全部）"
-                className="w-full sm:w-40"
-                value={township}
-                onChange={setTownship}
-                disabled={!city || city === DELIVERY_CITY}
-                options={townshipOptions.map((t) => ({ label: t, value: t }))}
-                showSearch
+                showSearch={{
+                  optionFilterProp: 'label'
+                }}
                 allowClear
               />
               <Input
@@ -564,10 +561,10 @@ export default function OrdersPage() {
               <Button
                 icon={<ReloadOutlined />}
                 onClick={() => {
-                  fetchLocations();
-                  if (city) fetchOrders(city, township);
+                  fetchRouteOptions();
+                  if (selected) fetchOrders(selected);
                 }}
-                loading={locationsLoading || loading}
+                loading={routesLoading || loading}
               >
                 重新載入
               </Button>
@@ -584,7 +581,7 @@ export default function OrdersPage() {
                 icon={<DownloadOutlined />}
                 onClick={openCloseModal}
               >
-                結單（依分組匯出並清除）
+                結單（依路線匯出並清除）
               </Button>
             </Space>
           }
@@ -605,9 +602,9 @@ export default function OrdersPage() {
           </Text>
         </div>
 
-        {!city ? (
+        {!selected ? (
           <Empty
-            description="請先選擇縣市（可再選地點）以查詢訂單"
+            description="請先選擇路線以查詢訂單"
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           />
         ) : (
@@ -621,7 +618,7 @@ export default function OrdersPage() {
                 rowExpandable: () => true,
               }}
               pagination={{ defaultPageSize: 10, showSizeChanger: true }}
-              locale={{ emptyText: "此縣市/地點目前沒有訂單" }}
+              locale={{ emptyText: "此路線目前沒有訂單" }}
               scroll={{ x: "max-content" }}
             />
           </Spin>
@@ -629,7 +626,7 @@ export default function OrdersPage() {
       </Card>
 
       <Modal
-        title="結單（依分組）"
+        title="結單（依路線）"
         open={closeModalOpen}
         onCancel={() => {
           if (!closing) setCloseModalOpen(false);
@@ -637,7 +634,8 @@ export default function OrdersPage() {
         footer={null}
       >
         <p style={{ color: "#8c8c8c", fontSize: 13 }}>
-          每個自取點與「宅配」各自成一組，下載該組 CSV 成功後才會清除該組訂單。
+          每條路線、「未分路線」與「宅配」各自成一組，下載該組 CSV
+          成功後才會清除該組訂單。
         </p>
         <Spin spinning={groupsLoading}>
           {closeGroups.length === 0 ? (
@@ -662,7 +660,7 @@ export default function OrdersPage() {
                   {group.method === "delivery" ? (
                     <Tag color="purple">宅配</Tag>
                   ) : (
-                    <Tag color="cyan">自取</Tag>
+                    <Tag color="cyan">路線</Tag>
                   )}
                   <Text>{group.display}</Text>
                   <Text type="secondary">{group.count} 筆</Text>
@@ -767,8 +765,9 @@ export default function OrdersPage() {
                 >
                   <Select
                     placeholder="選擇取貨點"
-                    showSearch
-                    optionFilterProp="label"
+                    showSearch={{
+                      optionFilterProp: 'label'
+                    }}
                     options={pickupSpots.map((s) => ({
                       label: `${s.city} ${s.township}`,
                       value: s.id,
@@ -796,8 +795,9 @@ export default function OrdersPage() {
                       >
                         <Select
                           placeholder="選擇商品"
-                          showSearch
-                          optionFilterProp="label"
+                          showSearch={{
+                            optionFilterProp: 'label'
+                          }}
                           style={{ width: 360 }}
                           options={products.map((p) => ({
                             label: `${p.name}（$${p.price}${p.promoSummary ? ` · ${p.promoSummary}` : ""

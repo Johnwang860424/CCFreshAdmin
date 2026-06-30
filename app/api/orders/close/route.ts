@@ -10,17 +10,17 @@ import { buildCsv, safeFilename, taipeiDateStamp } from "@/app/lib/csv";
 
 interface GroupBody {
   method?: string;
-  pickupSpotId?: number | null;
+  routeId?: number | null;
 }
 
-/** 取出某一結單分組的訂單：宅配為一組，自取則依 pickup_spot_id 分組 */
+/** 取出某一結單分組的訂單：宅配為一組，自取則依「路線」（含未分路線）分組 */
 function filterGroup(orders: OrderRow[], body: GroupBody): OrderRow[] {
   if (body.method === "delivery") {
     return orders.filter((o) => o.deliveryMethod === "delivery");
   }
-  const spotId = body.pickupSpotId ?? null;
+  const routeId = body.routeId ?? null;
   return orders.filter(
-    (o) => o.deliveryMethod === "pickup" && (o.pickupSpotId ?? null) === spotId,
+    (o) => o.deliveryMethod === "pickup" && (o.routeId ?? null) === routeId,
   );
 }
 
@@ -59,10 +59,10 @@ export const POST = jsonHandler(async (request) => {
     order.pickupNumber ?? "",
     order.customerName,
     order.tag,
-    // 取貨地點：自取帶入鄉鎮（不含縣市），宅配帶入收件地址
+    // 取貨地點：自取帶入「縣市+地點」（同路線跨縣市時同名鄉鎮亦可區分），宅配帶入收件地址
     order.deliveryMethod === "delivery"
       ? (order.shippingAddress ?? "")
-      : (order.pickupSpotTownship ?? ""),
+      : (order.pickupSpotLabel ?? ""),
     order.items
       .map((item) => `${item.productName}*${item.quantity}`)
       .join("/"),
@@ -75,7 +75,7 @@ export const POST = jsonHandler(async (request) => {
   const csv = buildCsv([header, ...rows]);
 
   const groupName =
-    body.method === "delivery" ? "宅配" : orders[0].pickupSpotLabel || "自取";
+    body.method === "delivery" ? "宅配" : (orders[0].routeName ?? "未分路線");
   const filename = safeFilename(`orders_${groupName}_${taipeiDateStamp()}.csv`);
 
   return new Response(csv, {
@@ -92,6 +92,6 @@ export const POST = jsonHandler(async (request) => {
 // 結單第二步：客戶端確認 CSV 已成功下載後，才清除該分組的訂單。
 export const DELETE = jsonHandler(async (request) => {
   const body = (await request.json().catch(() => ({}))) as GroupBody;
-  await deleteOrdersByGroup(body.method ?? "pickup", body.pickupSpotId ?? null);
+  await deleteOrdersByGroup(body.method ?? "pickup", body.routeId ?? null);
   return { success: true };
 }, "清除訂單失敗");

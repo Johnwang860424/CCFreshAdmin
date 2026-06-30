@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import {
-  getOrdersByLocation,
-  getOrderLocations,
+  getOrdersByRoute,
+  getOrderRoutes,
   getDeliveryOrders,
-  hasDeliveryOrders,
   createOrder,
   OrderInputError,
 } from "@/app/lib/orders";
@@ -11,29 +10,32 @@ import { jsonHandler } from "@/app/lib/api";
 import { validateCreateOrderBody } from "@/app/lib/validation";
 
 // 訂單查詢：
-// - 無參數 → 回傳有自取訂單的縣市/鄉鎮清單與是否有宅配訂單（供下拉選單）。
+// - 無參數 → 回傳有訂單的路線清單、是否有未分路線訂單、是否有宅配訂單（供篩選下拉）。
 //   進到畫面時僅取清單，不載入全部訂單。
-// - method=delivery → 回傳所有宅配訂單（含明細）。宅配無結構化縣市/鄉鎮。
-// - city 參數（可再加 township）→ 回傳該縣市/鄉鎮的自取訂單（含明細）。
+// - method=delivery → 回傳所有宅配訂單（含明細）。宅配無取貨點/路線。
+// - route=<id> / route=unassigned → 回傳該路線（未分路線）的自取訂單（含明細）。
 export const GET = jsonHandler(async (request) => {
   const params = new URL(request.url).searchParams;
-  const city = params.get("city");
   const method = params.get("method");
+  const route = params.get("route");
 
   if (method === "delivery") {
     return getDeliveryOrders();
   }
 
-  if (!city) {
-    const [locations, hasDelivery] = await Promise.all([
-      getOrderLocations(),
-      hasDeliveryOrders(),
-    ]);
-    return { locations, hasDelivery };
+  if (!route) {
+    return getOrderRoutes();
   }
 
-  const township = params.get("township");
-  return getOrdersByLocation(city, township || null);
+  if (route === "unassigned") {
+    return getOrdersByRoute(null);
+  }
+
+  const n = Number(route);
+  if (!Number.isInteger(n) || n <= 0) {
+    return NextResponse.json({ error: "無效的路線" }, { status: 400 });
+  }
+  return getOrdersByRoute(n);
 }, "無法讀取訂單資料");
 
 export const POST = jsonHandler(async (request) => {

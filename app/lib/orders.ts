@@ -26,6 +26,10 @@ export interface OrderRow {
   pickupSpotLabel: string | null;
   /** 自取點鄉鎮（不含縣市）；宅配或取貨點已刪除為 null */
   pickupSpotTownship: string | null;
+  /** 所屬路線 id（經取貨點關聯）；宅配、未分路線或取貨點已刪除為 null */
+  routeId: number | null;
+  /** 所屬路線名稱；宅配、未分路線或取貨點已刪除為 null */
+  routeName: string | null;
   /** 現場取貨號碼牌（每取貨點各自遞增；宅配為 null） */
   pickupNumber: number | null;
   shippingAddress: string | null;
@@ -69,6 +73,8 @@ function assembleOrders(
     pickupSpotId: (r.pickup_spot_id as number) ?? null,
     pickupSpotLabel: (r.pickup_spot_label as string) ?? null,
     pickupSpotTownship: (r.pickup_spot_township as string) ?? null,
+    routeId: (r.route_id as number) ?? null,
+    routeName: (r.route_name as string) ?? null,
     pickupNumber: (r.pickup_number as number) ?? null,
     shippingAddress: (r.shipping_address as string) ?? null,
     note: (r.note as string) ?? null,
@@ -79,7 +85,7 @@ function assembleOrders(
   }));
 }
 
-/** 取得所有訂單（含明細），按建立時間降冪排列。供結單 CSV 匯出使用。 */
+/** 取得所有訂單（含明細），按建立順序排列。供結單 CSV 匯出使用。 */
 export async function getOrders(): Promise<OrderRow[]> {
   const orderRows = await sql`
     SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
@@ -88,9 +94,12 @@ export async function getOrders(): Promise<OrderRow[]> {
              WHEN ps.id IS NOT NULL THEN ps.city || ' ' || ps.township
              ELSE NULL
            END AS pickup_spot_label,
-           ps.township AS pickup_spot_township
+           ps.township AS pickup_spot_township,
+           ps.route_id AS route_id,
+           r.name AS route_name
     FROM orders o
     LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+    LEFT JOIN routes r ON r.id = ps.route_id
     ORDER BY o.id ASC
   `;
 
@@ -104,33 +113,27 @@ export async function getOrders(): Promise<OrderRow[]> {
 }
 
 /**
- * 依縣市（可再指定鄉鎮）取得自取訂單（含明細），按建立時間降冪。
- * 僅含自取訂單——宅配僅有自由文字地址，無結構化縣市/鄉鎮。
+ * 依路線取得自取訂單（含明細），按建立時間降冪。
+ * `routeId` 為路線 id，或 null（未分路線：取貨點 route_id 為 NULL）。
+ * 僅含自取訂單——宅配僅有自由文字地址，無取貨點/路線。
  */
-export async function getOrdersByLocation(
-  city: string,
-  township?: string | null,
+export async function getOrdersByRoute(
+  routeId: number | null,
 ): Promise<OrderRow[]> {
-  const orderRows = township
-    ? await sql`
-        SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
-               o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
-               ps.city || ' ' || ps.township AS pickup_spot_label
-        FROM orders o
-        JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
-        WHERE o.delivery_method = 'pickup'
-          AND ps.city = ${city} AND ps.township = ${township}
-        ORDER BY o.created_at DESC
-      `
-    : await sql`
-        SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
-               o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
-               ps.city || ' ' || ps.township AS pickup_spot_label
-        FROM orders o
-        JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
-        WHERE o.delivery_method = 'pickup' AND ps.city = ${city}
-        ORDER BY o.created_at DESC
-      `;
+  const orderRows = await sql`
+    SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
+           o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
+           ps.city || ' ' || ps.township AS pickup_spot_label,
+           ps.township AS pickup_spot_township,
+           ps.route_id AS route_id,
+           r.name AS route_name
+    FROM orders o
+    JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+    LEFT JOIN routes r ON r.id = ps.route_id
+    WHERE o.delivery_method = 'pickup'
+      AND ps.route_id IS NOT DISTINCT FROM ${routeId}
+    ORDER BY o.created_at DESC
+  `;
 
   if (orderRows.length === 0) return [];
 
@@ -147,7 +150,7 @@ export async function getOrdersByLocation(
 
 /**
  * 取得所有宅配訂單（含明細），按建立時間降冪。
- * 宅配無結構化縣市/鄉鎮，僅有自由文字地址，故獨立成一條查詢路徑。
+ * 宅配無取貨點/路線，僅有自由文字地址，故獨立成一條查詢路徑。
  */
 export async function getDeliveryOrders(): Promise<OrderRow[]> {
   const orderRows = await sql`
@@ -172,137 +175,174 @@ export async function getDeliveryOrders(): Promise<OrderRow[]> {
   return assembleOrders(orderRows, itemRows);
 }
 
-/** 是否存在宅配訂單（供查詢下拉選單決定是否顯示「宅配」選項） */
-export async function hasDeliveryOrders(): Promise<boolean> {
-  const rows = await sql`
-    SELECT 1 FROM orders WHERE delivery_method = 'delivery' LIMIT 1
-  `;
-  return rows.length > 0;
+/** 訂單管理篩選下拉資料：有自取訂單的路線、是否有未分路線訂單、是否有宅配訂單。 */
+export interface OrderRouteOptions {
+  routes: { id: number; name: string }[];
+  hasUnassigned: boolean;
+  hasDelivery: boolean;
 }
 
-/** 縣市與其底下有自取訂單的鄉鎮（供查詢下拉選單使用） */
-export interface OrderLocation {
-  city: string;
-  townships: string[];
-}
-
-/** 取得目前有自取訂單的縣市及鄉鎮清單，供搜尋下拉選單使用 */
-export async function getOrderLocations(): Promise<OrderLocation[]> {
-  const rows = await sql`
-    SELECT DISTINCT ps.city, ps.township
+/** 取得目前有訂單的路線清單與「未分路線/宅配」是否存在，供訂單管理篩選下拉使用。 */
+export async function getOrderRoutes(): Promise<OrderRouteOptions> {
+  const routeRows = await sql`
+    SELECT DISTINCT r.id, r.name
     FROM orders o
     JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+    JOIN routes r ON r.id = ps.route_id
     WHERE o.delivery_method = 'pickup'
-    ORDER BY ps.city, ps.township
+    ORDER BY r.id
   `;
 
-  const byCity = new Map<string, string[]>();
-  for (const r of rows) {
-    const city = r.city as string;
-    if (!byCity.has(city)) byCity.set(city, []);
-    byCity.get(city)!.push(r.township as string);
-  }
-  return [...byCity.entries()].map(([city, townships]) => ({
-    city,
-    townships,
-  }));
+  const [{ has_unassigned, has_delivery }] = (await sql`
+    SELECT
+      EXISTS(
+        SELECT 1 FROM orders o
+        LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+        WHERE o.delivery_method = 'pickup' AND ps.route_id IS NULL
+      ) AS has_unassigned,
+      EXISTS(
+        SELECT 1 FROM orders WHERE delivery_method = 'delivery'
+      ) AS has_delivery
+  `) as { has_unassigned: boolean; has_delivery: boolean }[];
+
+  return {
+    routes: routeRows.map((r) => ({ id: r.id as number, name: r.name as string })),
+    hasUnassigned: Boolean(has_unassigned),
+    hasDelivery: Boolean(has_delivery),
+  };
 }
 
-/** 縣市訂單統計：以鄉鎮為列、商品為欄的數量交叉表 */
-export interface CityOrderMatrix {
-  city: string;
-  /** 欄位：此縣市訂單出現過的所有商品名稱（依名稱排序） */
+/** 路線訂單統計：以取貨點為列、商品為欄的數量交叉表 */
+export interface RouteOrderMatrix {
+  /** 查詢回顯：指定路線 id ｜ "unassigned"（未分路線）｜ "all"（全部路線） */
+  route: number | "unassigned" | "all";
+  /** 指定路線的名稱；未分路線/全部路線為 null */
+  routeName: string | null;
+  /** 套用之日期區間（YYYY-MM-DD，台北時區，含起訖兩端） */
+  from: string;
+  to: string;
+  /** 欄位：範圍內訂單出現過的所有商品名稱（依名稱排序） */
   products: string[];
-  /** 列：每個鄉鎮一筆，含各商品數量 */
+  /** 列：每個取貨點一筆，含各商品數量 */
   rows: {
-    township: string;
-    /** 商品名稱 → 訂購數量（未出現的商品為 0） */
+    pickupSpotId: number;
+    label: string;
     quantities: Record<string, number>;
   }[];
-  /** 每個商品的總量（各鄉鎮加總，即直欄合計）：商品名稱 → 總數量 */
+  /** 每個商品的總量（各取貨點加總，即直欄合計）：商品名稱 → 總數量 */
   productTotals: Record<string, number>;
 }
 
-/** 取得目前有自取訂單的縣市清單（供查詢下拉選單使用） */
-export async function getOrderCities(): Promise<string[]> {
-  const rows = await sql`
-    SELECT DISTINCT ps.city
-    FROM orders o
-    JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
-    WHERE o.delivery_method = 'pickup'
-    ORDER BY ps.city
-  `;
-  return rows.map((r) => r.city as string);
-}
-
 /**
- * 取得指定縣市的訂單交叉表：縱軸為該縣市下有訂單的鄉鎮，橫軸為商品，
- * 表格內容為各鄉鎮各商品的訂購數量，並附每個商品的總量。
- * 僅計入自取（pickup）訂單——宅配訂單僅有自由文字地址，無結構化鄉鎮。
+ * 取得路線訂單統計交叉表：縱軸為取貨點（依路線內 sort_order）、橫軸為商品、
+ * 內容為各取貨點各商品的訂購數量，並附每個商品的總量。
+ * - `route`：指定路線 id（單一路線）、`"unassigned"`（未分路線）、`"all"`（全部路線、跨路線）。
+ * - `from`/`to`：日期區間（YYYY-MM-DD，以台北時區比對 created_at，含起訖兩端）。
+ * 僅計入自取（pickup）訂單——宅配訂單僅有自由文字地址，無取貨點。
  */
-export async function getCityOrderMatrix(
-  city: string,
-): Promise<CityOrderMatrix> {
-  const rows = await sql`
-    SELECT ps.township, oi.product_name, SUM(oi.quantity)::int AS qty
-    FROM orders o
-    JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
-    JOIN order_items oi ON oi.order_id = o.id
-    WHERE o.delivery_method = 'pickup' AND ps.city = ${city}
-    GROUP BY ps.township, oi.product_name
-    ORDER BY ps.township
-  `;
+export async function getRouteOrderMatrix(
+  route: number | "unassigned" | "all",
+  from: string,
+  to: string,
+): Promise<RouteOrderMatrix> {
+  const rows =
+    route === "all"
+      ? await sql`
+          SELECT ps.id AS spot_id, ps.city, ps.township, ps.route_id, ps.sort_order,
+                 oi.product_name, p.sort_order AS product_sort, SUM(oi.quantity)::int AS qty
+          FROM orders o
+          JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+          JOIN order_items oi ON oi.order_id = o.id
+          LEFT JOIN products p ON p.id = oi.product_id
+          WHERE o.delivery_method = 'pickup'
+            AND (o.created_at AT TIME ZONE 'Asia/Taipei')::date BETWEEN ${from} AND ${to}
+          GROUP BY ps.id, ps.city, ps.township, ps.route_id, ps.sort_order, oi.product_name, p.sort_order
+          ORDER BY ps.city, ps.sort_order, ps.id
+        `
+      : await sql`
+          SELECT ps.id AS spot_id, ps.city, ps.township, ps.route_id, ps.sort_order,
+                 oi.product_name, p.sort_order AS product_sort, SUM(oi.quantity)::int AS qty
+          FROM orders o
+          JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+          JOIN order_items oi ON oi.order_id = o.id
+          LEFT JOIN products p ON p.id = oi.product_id
+          WHERE o.delivery_method = 'pickup'
+            AND (o.created_at AT TIME ZONE 'Asia/Taipei')::date BETWEEN ${from} AND ${to}
+            AND ps.route_id IS NOT DISTINCT FROM ${route === "unassigned" ? null : route}
+          GROUP BY ps.id, ps.city, ps.township, ps.route_id, ps.sort_order, oi.product_name, p.sort_order
+          ORDER BY ps.city, ps.sort_order, ps.id
+        `;
 
-  const productSet = new Set<string>();
-  const byTownship = new Map<string, Record<string, number>>();
+  // 以 Map 保留查詢回傳的取貨點順序（已依 city, sort_order, id 排序）。
+  const bySpot = new Map<
+    number,
+    { label: string; quantities: Record<string, number> }
+  >();
   const productTotals: Record<string, number> = {};
+  // 商品欄位排序鍵：依 products.sort_order（已刪除商品的 product_id 為 NULL → 排最後）。
+  const productSortKey = new Map<string, number>();
 
   for (const r of rows) {
-    const township = r.township as string;
+    const spotId = r.spot_id as number;
+    const label = `${r.city as string} ${r.township as string}`;
     const product = r.product_name as string;
     const qty = r.qty as number;
+    const productSort = (r.product_sort as number) ?? Number.MAX_SAFE_INTEGER;
 
-    productSet.add(product);
-    if (!byTownship.has(township)) byTownship.set(township, {});
-    byTownship.get(township)![product] = qty;
+    if (!productSortKey.has(product)) productSortKey.set(product, productSort);
+    if (!bySpot.has(spotId)) bySpot.set(spotId, { label, quantities: {} });
+    bySpot.get(spotId)!.quantities[product] = qty;
     productTotals[product] = (productTotals[product] ?? 0) + qty;
   }
 
-  const products = [...productSet].sort((a, b) =>
-    a.localeCompare(b, "zh-Hant"),
+  // 商品欄位依 products.sort_order 排序；同序則以名稱（zh-Hant）穩定排序。
+  const products = [...productSortKey.keys()].sort((a, b) => {
+    const sa = productSortKey.get(a)!;
+    const sb = productSortKey.get(b)!;
+    return sa !== sb ? sa - sb : a.localeCompare(b, "zh-Hant");
+  });
+
+  const resultRows = [...bySpot.entries()].map(
+    ([pickupSpotId, { label, quantities }]) => ({
+      pickupSpotId,
+      label,
+      quantities,
+    }),
   );
 
-  const resultRows = [...byTownship.entries()]
-    .map(([township, quantities]) => ({ township, quantities }))
-    .sort((a, b) => a.township.localeCompare(b.township, "zh-Hant"));
+  let routeName: string | null = null;
+  if (typeof route === "number") {
+    const nameRows = await sql`SELECT name FROM routes WHERE id = ${route}`;
+    routeName = (nameRows[0]?.name as string) ?? null;
+  }
 
-  return { city, products, rows: resultRows, productTotals };
+  return { route, routeName, from, to, products, rows: resultRows, productTotals };
 }
 
-/** 結單分組彙整：宅配為一組，自取則依 pickup_spot_id 各成一組 */
+/** 結單分組彙整：宅配為一組，自取則依「路線」（含未分路線）各成一組 */
 export interface CloseGroupSummary {
   key: string;
   method: "pickup" | "delivery";
-  pickupSpotId: number | null;
+  /** 自取分組所屬路線 id；未分路線為 null。宅配為 null。 */
+  routeId: number | null;
   display: string;
   count: number;
 }
 
 /**
  * 取得結單分組彙整（各組訂單筆數），供結單視窗列出可結單分組。
+ * 自取以路線聚合（同一路線的所有取貨點訂單合為一組），未分路線（route_id 為 NULL）自成一組，宅配自成一組。
  * 直接以 SQL 聚合，不需載入全部訂單明細。
  */
 export async function getCloseGroups(): Promise<CloseGroupSummary[]> {
   const rows = await sql`
-    SELECT o.delivery_method AS method, o.pickup_spot_id,
-           CASE
-             WHEN ps.id IS NOT NULL THEN ps.city || ' ' || ps.township
-             ELSE NULL
-           END AS label,
+    SELECT o.delivery_method AS method, ps.route_id AS route_id,
+           r.name AS route_name,
            COUNT(*)::int AS count
     FROM orders o
     LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
-    GROUP BY o.delivery_method, o.pickup_spot_id, label
+    LEFT JOIN routes r ON r.id = ps.route_id
+    GROUP BY o.delivery_method, ps.route_id, r.name
   `;
 
   const groups: CloseGroupSummary[] = rows.map((r) => {
@@ -312,17 +352,17 @@ export async function getCloseGroups(): Promise<CloseGroupSummary[]> {
       return {
         key: "delivery",
         method: "delivery",
-        pickupSpotId: null,
+        routeId: null,
         display: "宅配",
         count,
       };
     }
-    const spotId = (r.pickup_spot_id as number) ?? null;
+    const routeId = (r.route_id as number) ?? null;
     return {
-      key: `pickup:${spotId ?? "∅"}`,
+      key: `route:${routeId ?? "∅"}`,
       method: "pickup",
-      pickupSpotId: spotId,
-      display: (r.label as string) ?? "（未指定自取點）",
+      routeId,
+      display: (r.route_name as string) ?? "未分路線",
       count,
     };
   });
@@ -475,19 +515,36 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
 /**
  * 依「結單分組」刪除訂單（order_items 由 ON DELETE CASCADE 自動清除）。
  * - 宅配：刪除所有 delivery_method='delivery' 的訂單
- * - 自取：刪除 delivery_method='pickup' 且 pickup_spot_id 相符（含 NULL）的訂單
+ * - 自取（指定路線）：刪除該路線所有取貨點的 pickup 訂單
+ * - 自取（未分路線 routeId=null）：刪除取貨點 route_id 為 NULL 者，及無取貨點（pickup_spot_id 為 NULL）的 pickup 訂單
  */
 export async function deleteOrdersByGroup(
   method: string,
-  pickupSpotId?: number | null,
+  routeId?: number | null,
 ) {
   if (method === "delivery") {
     await sql`DELETE FROM orders WHERE delivery_method = 'delivery'`;
+    return;
+  }
+
+  if (routeId == null) {
+    await sql`
+      DELETE FROM orders
+      WHERE delivery_method = 'pickup'
+        AND (
+          pickup_spot_id IS NULL
+          OR pickup_spot_id IN (
+            SELECT id FROM pickup_spots WHERE route_id IS NULL
+          )
+        )
+    `;
   } else {
     await sql`
       DELETE FROM orders
       WHERE delivery_method = 'pickup'
-        AND pickup_spot_id IS NOT DISTINCT FROM ${pickupSpotId ?? null}
+        AND pickup_spot_id IN (
+          SELECT id FROM pickup_spots WHERE route_id = ${routeId}
+        )
     `;
   }
 }
