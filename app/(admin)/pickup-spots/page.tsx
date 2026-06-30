@@ -28,7 +28,6 @@ import {
   PlusOutlined,
   DeleteOutlined,
   EditOutlined,
-  SearchOutlined,
   ReloadOutlined,
   EnvironmentOutlined,
   HolderOutlined,
@@ -122,7 +121,7 @@ export default function PickupSpotsPage() {
   const [data, setData] = useState<PickupSpot[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<string>("");
   const [sortMode, setSortMode] = useState(false);
   const [reordering, setReordering] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -149,35 +148,42 @@ export default function PickupSpotsPage() {
     fetchData();
   }, [fetchData]);
 
+  // 取得目前有自取點的所有縣市，並依照 TAIWAN_LOCATIONS 的既定順序排序
+  const activeCities = useMemo(() => {
+    const citiesWithData = Array.from(new Set(data.map((item) => item.city)));
+    return (TAIWAN_LOCATIONS as readonly string[]).filter((city) =>
+      citiesWithData.includes(city)
+    );
+  }, [data]);
+
+  // 當載入資料後，若目前的 activeTab 不在有資料的縣市中，自動切換至第一個有資料的縣市
+  useEffect(() => {
+    if (activeCities.length > 0) {
+      const hasActiveTab = activeCities.includes(activeTab);
+      if (!hasActiveTab) {
+        setActiveTab(activeCities[0]);
+      }
+    } else {
+      setActiveTab("");
+    }
+  }, [activeCities, activeTab]);
+
   useEffect(() => {
     if (!modalOpen) return;
     if (editing) {
       form.setFieldsValue({ city: editing.city, township: editing.township });
     } else {
       form.resetFields();
+      if (activeTab) {
+        form.setFieldsValue({ city: activeTab });
+      }
     }
-  }, [modalOpen, editing, form]);
+  }, [modalOpen, editing, form, activeTab]);
 
-  const filtered = data.filter(
-    (item) => item.city.includes(search) || item.township.includes(search),
-  );
+  const spotsInActiveTab = useMemo(() => {
+    return data.filter((item) => item.city === activeTab);
+  }, [data, activeTab]);
 
-  // 排序模式下：依縣市分組，群組順序沿用 TAIWAN_LOCATIONS 既定固定序。
-  const groups = useMemo(() => {
-    const byCity = new Map<string, PickupSpot[]>();
-    for (const spot of data) {
-      const list = byCity.get(spot.city);
-      if (list) list.push(spot);
-      else byCity.set(spot.city, [spot]);
-    }
-    const cityRank = (city: string) => {
-      const i = (TAIWAN_LOCATIONS as readonly string[]).indexOf(city);
-      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
-    };
-    return [...byCity.entries()]
-      .sort((a, b) => cityRank(a[0]) - cityRank(b[0]) || a[0].localeCompare(b[0]))
-      .map(([city, spots]) => ({ city, spots }));
-  }, [data]);
 
   const openModal = (record?: PickupSpot) => {
     setEditing(record ?? null);
@@ -210,6 +216,7 @@ export default function PickupSpotsPage() {
           township: values.township,
         });
         messageApi.success("自取地點已新增");
+        setActiveTab(values.city);
       }
       closeModal();
       await fetchData();
@@ -240,56 +247,47 @@ export default function PickupSpotsPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
 
-  // 每縣市各自一個 onDragEnd：只在「同縣市群組內」調整順序並即時樂觀儲存。
-  const makeDragEndHandler =
-    (city: string) =>
-      async ({ active, over }: DragEndEvent) => {
-        if (!over || active.id === over.id) return;
+  // 只在「目前選擇縣市內」調整順序並即時樂觀儲存。
+  const handleDragEnd = async ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
 
-        const prev = data;
-        const cityItems = prev.filter((i) => i.city === city);
-        const oldIndex = cityItems.findIndex((i) => i.id === active.id);
-        const newIndex = cityItems.findIndex((i) => i.id === over.id);
-        if (oldIndex < 0 || newIndex < 0) return;
+    const prev = data;
+    const cityItems = prev.filter((i) => i.city === activeTab);
+    const oldIndex = cityItems.findIndex((i) => i.id === active.id);
+    const newIndex = cityItems.findIndex((i) => i.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
 
-        const reordered = arrayMove(cityItems, oldIndex, newIndex);
-        // 把重排後的該縣市項目，依序填回原本屬於該縣市的位置，其餘列不動。
-        let k = 0;
-        const next = prev.map((i) => (i.city === city ? reordered[k++] : i));
-        setData(next); // 樂觀更新
+    const reordered = arrayMove(cityItems, oldIndex, newIndex);
+    // 把重排後的該縣市項目，依序填回原本屬於該縣市的位置，其餘列不動。
+    let k = 0;
+    const next = prev.map((i) => (i.city === activeTab ? reordered[k++] : i));
+    setData(next); // 樂觀更新
 
-        try {
-          setReordering(true);
-          await putJson("/api/pickup-spots/reorder", {
-            city,
-            ids: reordered.map((i) => i.id),
-          });
-        } catch {
-          setData(prev); // 失敗回滾
-          messageApi.error("排序儲存失敗，已還原順序");
-        } finally {
-          setReordering(false);
-        }
-      };
+    try {
+      setReordering(true);
+      await putJson("/api/pickup-spots/reorder", {
+        city: activeTab,
+        ids: reordered.map((i) => i.id),
+      });
+    } catch {
+      setData(prev); // 失敗回滾
+      messageApi.error("排序儲存失敗，已還原順序");
+    } finally {
+      setReordering(false);
+    }
+  };
 
   const baseColumns: ColumnsType<PickupSpot> = [
-    {
-      title: "縣市",
-      dataIndex: "city",
-      key: "city",
-      width: 160,
-      render: (city: string) => (
-        <Space>
-          <EnvironmentOutlined style={{ color: "#1677ff" }} />
-          <Text strong>{city}</Text>
-        </Space>
-      ),
-    },
     {
       title: "地點",
       dataIndex: "township",
       key: "township",
-      render: (township: string) => <Text>{township}</Text>,
+      render: (township: string) => (
+        <Space>
+          <EnvironmentOutlined style={{ color: "#1677ff" }} />
+          <Text>{township}</Text>
+        </Space>
+      ),
     },
     {
       title: "操作",
@@ -317,7 +315,7 @@ export default function PickupSpotsPage() {
     },
   ];
 
-  // 排序模式：把手在前、隱藏「縣市」（已是群組標題）與「操作」欄，避免拖拉時誤觸。
+  // 排序模式：把手在前、隱藏「縣市」與「操作」欄，避免拖拉時誤觸。
   const sortColumns: ColumnsType<PickupSpot> = [
     {
       title: "排序",
@@ -344,7 +342,7 @@ export default function PickupSpotsPage() {
             sortMode ? (
               <Space wrap>
                 <Text type="secondary">
-                  拖拉左側把手調整同縣市內順序，變更即時儲存
+                  拖拉左側把手調整目前縣市內順序，變更即時儲存
                 </Text>
                 <Button
                   type="primary"
@@ -357,14 +355,6 @@ export default function PickupSpotsPage() {
               </Space>
             ) : (
               <Space wrap>
-                <Input
-                  placeholder="搜尋縣市或地點"
-                  prefix={<SearchOutlined />}
-                  allowClear
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full sm:w-56"
-                />
                 <Button
                   icon={<ReloadOutlined />}
                   onClick={fetchData}
@@ -374,8 +364,8 @@ export default function PickupSpotsPage() {
                 </Button>
                 <Button
                   icon={<SortAscendingOutlined />}
+                  disabled={spotsInActiveTab.length <= 1}
                   onClick={() => {
-                    setSearch("");
                     setSortMode(true);
                   }}
                 >
@@ -393,43 +383,77 @@ export default function PickupSpotsPage() {
           }
         />
 
+        {/* Custom Premium Tabs */}
+        {activeCities.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-6 p-1.5 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-800/80">
+            {activeCities.map((city) => {
+              const count = data.filter((item) => item.city === city).length;
+              const isActive = activeTab === city;
+              return (
+                <button
+                  key={city}
+                  disabled={sortMode}
+                  onClick={() => setActiveTab(city)}
+                  className={`
+                    flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 select-none
+                    ${sortMode ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                    ${
+                      isActive
+                        ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm border border-slate-100 dark:border-slate-700/50 scale-[1.02]"
+                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-white/50 dark:hover:bg-slate-800/30"
+                    }
+                  `}
+                >
+                  <EnvironmentOutlined
+                    className={`text-xs transition-colors duration-200 ${isActive ? "text-blue-500" : "text-slate-400"}`}
+                  />
+                  <span>{city}</span>
+                  <span
+                    className={`
+                      inline-flex items-center justify-center px-2 py-0.5 text-xs font-semibold rounded-full transition-all duration-200
+                      ${
+                        isActive
+                          ? "bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400"
+                          : "bg-slate-200/60 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400"
+                      }
+                    `}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <Spin spinning={loading}>
           {sortMode ? (
-            <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-              {groups.map(({ city, spots }) => (
-                <div key={city}>
-                  <Space style={{ marginBottom: 8 }}>
-                    <EnvironmentOutlined style={{ color: "#1677ff" }} />
-                    <Text strong>{city}</Text>
-                  </Space>
-                  <DndContext
-                    sensors={sensors}
-                    onDragEnd={makeDragEndHandler(city)}
-                    modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-                    autoScroll={{ threshold: { x: 0, y: 0.05 } }}
-                  >
-                    <SortableContext
-                      items={spots.map((i) => i.id)}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      <Table
-                        rowKey="id"
-                        columns={sortColumns}
-                        dataSource={spots}
-                        pagination={false}
-                        scroll={{ x: "max-content" }}
-                        components={{ body: { row: SortableRow } }}
-                      />
-                    </SortableContext>
-                  </DndContext>
-                </div>
-              ))}
-            </Space>
+            <div key={activeTab}>
+              <DndContext
+                sensors={sensors}
+                onDragEnd={handleDragEnd}
+                modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+                autoScroll={{ threshold: { x: 0, y: 0.05 } }}
+              >
+                <SortableContext
+                  items={spotsInActiveTab.map((i) => i.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <Table
+                    rowKey="id"
+                    columns={sortColumns}
+                    dataSource={spotsInActiveTab}
+                    pagination={false}
+                    scroll={{ x: "max-content" }}
+                    components={{ body: { row: SortableRow } }}
+                  />
+                </SortableContext>
+              </DndContext>
+            </div>
           ) : (
             <Table
               rowKey="id"
               columns={baseColumns}
-              dataSource={filtered}
+              dataSource={spotsInActiveTab}
               pagination={{ defaultPageSize: 10, showSizeChanger: true }}
               scroll={{ x: "max-content" }}
             />
