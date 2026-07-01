@@ -1,4 +1,4 @@
-// 訂單匯出：由 OrderRow[] 組裝「依縣市分頁」的 xlsx 活頁簿。
+// 訂單匯出：由 OrderRow[] 組裝「依地點分頁」的 xlsx 活頁簿。
 // 供分組匯出（app/api/orders/close）與選取匯出（app/api/orders/selection）共用，
 // 確保兩處匯出的欄位與分頁規則一致。
 import * as XLSX from "xlsx";
@@ -31,38 +31,72 @@ function orderToRow(order: OrderRow): (string | number)[] {
   ];
 }
 
-/** 縣市 → 合法的 Excel 工作表名稱（≤31 字、不含 : \ / ? * [ ]，且不可空）。 */
-function toSheetName(city: string): string {
-  const cleaned = city.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31);
+/** 字串顯示寬度：全形（CJK、全形符號）字算 2，其餘算 1。 */
+function displayWidth(value: string | number): number {
+  const s = String(value);
+  let width = 0;
+  for (const ch of s) {
+    // 涵蓋 CJK 統一表意文字、注音、全形符號、假名等常見全形範圍
+    width += /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(
+      ch,
+    )
+      ? 2
+      : 1;
+  }
+  return width;
+}
+
+/** 由列陣列計算各欄自適應寬度（!cols），寬度取該欄最長內容並加緩衝、上限 60。 */
+function autoFitCols(aoa: (string | number)[][]): { wch: number }[] {
+  const colCount = aoa.reduce((max, row) => Math.max(max, row.length), 0);
+  const widths: { wch: number }[] = [];
+  for (let c = 0; c < colCount; c++) {
+    let max = 0;
+    for (const row of aoa) {
+      const cell = row[c];
+      if (cell !== undefined && cell !== null) {
+        max = Math.max(max, displayWidth(cell));
+      }
+    }
+    widths.push({ wch: Math.min(max + 2, 60) });
+  }
+  return widths;
+}
+
+/** 地點 → 合法的 Excel 工作表名稱（≤31 字、不含 : \ / ? * [ ]，且不可空）。 */
+function toSheetName(location: string): string {
+  const cleaned = location.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31);
   return cleaned || "其他";
 }
 
 /**
  * 由訂單陣列組裝 xlsx 活頁簿並回傳位元組。
- * 依「縣市」分成不同工作表（tab）：宅配歸「宅配」頁、自取無縣市（取貨點已刪除）歸「未分縣市」頁；
- * 分頁順序以縣市名稱穩定排序（zh-Hant）。呼叫端負責過濾/選取要匯出的訂單。
+ * 依「地點」分成不同工作表（tab）：自取以取貨地點（縣市 + 鄉鎮）分頁、宅配歸「宅配」頁、
+ * 自取無地點（取貨點已刪除）歸「未分地點」頁；分頁順序以地點名稱穩定排序（zh-Hant）。
+ * 呼叫端負責過濾/選取要匯出的訂單。
  */
 export function buildOrdersWorkbook(orders: OrderRow[]): Uint8Array<ArrayBuffer> {
-  const byCity = new Map<string, OrderRow[]>();
+  const byLocation = new Map<string, OrderRow[]>();
   for (const order of orders) {
-    const city =
+    const location =
       order.deliveryMethod === "delivery"
         ? "宅配"
-        : (order.pickupSpotCity ?? "未分縣市");
-    const bucket = byCity.get(city);
+        : (order.pickupSpotLabel ?? "未分地點");
+    const bucket = byLocation.get(location);
     if (bucket) bucket.push(order);
-    else byCity.set(city, [order]);
+    else byLocation.set(location, [order]);
   }
 
-  const cities = [...byCity.keys()].sort((a, b) =>
+  const locations = [...byLocation.keys()].sort((a, b) =>
     a.localeCompare(b, "zh-Hant"),
   );
 
   const wb = XLSX.utils.book_new();
-  for (const city of cities) {
-    const aoa = [EXPORT_HEADER, ...byCity.get(city)!.map(orderToRow)];
+  for (const location of locations) {
+    const aoa = [EXPORT_HEADER, ...byLocation.get(location)!.map(orderToRow)];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    XLSX.utils.book_append_sheet(wb, ws, toSheetName(city));
+    ws["!cols"] = autoFitCols(aoa);
+    XLSX.utils.book_append_sheet(wb, ws, toSheetName(location));
   }
 
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
