@@ -14,7 +14,7 @@ import {
   Modal,
   Form,
   Alert,
-  message,
+  App,
   Spin,
   Descriptions,
   Empty,
@@ -104,7 +104,7 @@ export default function OrdersPage() {
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [closingKey, setClosingKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [messageApi, contextHolder] = message.useMessage();
+  const { modal, message: messageApi } = App.useApp();
 
   // 新增訂單表單狀態
   const [createOpen, setCreateOpen] = useState(false);
@@ -337,7 +337,7 @@ export default function OrdersPage() {
   };
 
   const handleCloseGroup = (group: CloseGroup) => {
-    Modal.confirm({
+    modal.confirm({
       title: `確定結單「${group.display}」？`,
       icon: <ExclamationCircleFilled />,
       content: (
@@ -510,7 +510,6 @@ export default function OrdersPage() {
 
   return (
     <>
-      {contextHolder}
       <Spin spinning={closing} fullscreen description="結單處理中…" />
       <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
