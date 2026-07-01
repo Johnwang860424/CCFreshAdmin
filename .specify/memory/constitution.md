@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.1.1 → 1.1.2
-Bump rationale: Principle V's referential-integrity enumeration extended to the new delivery-route grouping (routes table + pickup_spots.route_id ON DELETE RESTRICT). Clarification of scope to an existing rule → PATCH.
+Version change: 1.1.2 → 1.2.0
+Bump rationale: Principle V redefined — orders are now mutable (item edit + single delete) until 出貨 clears the group; immutability applies to shipment as the settlement boundary rather than forbidding in-place edits. Snapshot, atomicity, and referential-integrity sub-rules retained/clarified. Enables feature specs/005-order-edit-ship. Materially expanded/redefined principle → MINOR.
 
 Modified principles:
-  - V. Order History Is Immutable (added delivery route to the ON DELETE RESTRICT enumeration)
+  - V. Order History Is Immutable → V. Orders Are Mutable Until Shipment, Immutable in History
 
 Added sections: none
 
 Removed sections: none
 
-Notes: CLAUDE.md updated in the same change to list the routes/categories/orders data modules, the categories/routes tables, db/migrations, and the route_id FK.
+Notes: CLAUDE.md Data layer paragraph updated in the same change — orders/order_items are editable and deletable by the admin before 出貨 via app/api/orders/[id] (PUT/DELETE), no longer "read/export/clear only".
 -->
 
 # CC 生鮮 (CC Fresh) Admin Constitution
@@ -69,23 +69,36 @@ parser keeps working.
 Rationale: Images live in external storage with no foreign key; only disciplined,
 ordered cleanup prevents leaked or dangling assets and broken deletes.
 
-### V. Order History Is Immutable
+### V. Orders Are Mutable Until Shipment, Immutable in History
 
-Existing `orders` and `order_items` rows are immutable, but new orders MAY be
-appended. Once written, an order or order-item row MUST NOT be edited or deleted
-in place (bulk export 結單 CSV and clearing/closing aside); admin order creation
-MUST insert new `orders`/`order_items` rows rather than mutating existing ones.
-Snapshotted columns (`product_name`, `unit_price`, `promo_*`, `subtotal`) MUST be
-captured at write time and preserved thereafter so historical orders survive
-later product or pickup-spot edits. Referential-integrity rules MUST be honored: a
-category still referenced by products, a pickup spot still referenced by orders, or
-a delivery route still referenced by pickup spots cannot be deleted
-(`ON DELETE RESTRICT`); these constraints are enforced in both the data layer and the
-database.
+Orders and order items form the working set for the current group-buy round and
+MAY be created, edited (item lines added / removed / re-quantified), and deleted by
+an admin **up to the point the group is shipped (出貨)**. Shipment is the
+irreversible settlement boundary: 出貨 clears the group's orders, and there is no
+post-shipment record to mutate.
 
-Rationale: Orders are financial records of past transactions; editing or deleting
-existing rows or breaking their snapshots would falsify history, whereas appending
-new orders adds to the record without rewriting it.
+Within that pre-shipment window the following MUST hold:
+
+- Snapshotted columns (`product_name`, `unit_price`, `promo_*`, `subtotal`) MUST be
+  captured at write time. Existing item lines MUST retain their original snapshot; a
+  quantity change recomputes `subtotal` from that same snapshot, and only newly
+  added lines snapshot the product's current price/promo. An order's `total` is
+  always the sum of its item subtotals.
+- All order writes MUST be atomic (single-statement / CTE, per the Neon HTTP
+  driver's lack of interactive transactions) so an order's items and total never
+  diverge.
+- Referential-integrity rules MUST be honored: a category still referenced by
+  products, a pickup spot still referenced by orders, or a delivery route still
+  referenced by pickup spots cannot be deleted (`ON DELETE RESTRICT`);
+  `order_items → orders` is `ON DELETE CASCADE`. These constraints are enforced in
+  both the data layer and the database.
+
+Rationale: In this domain orders are cleared every round at 出貨, so a pre-shipment
+order is an open working order, not a finalized historical financial record.
+Allowing edits and deletes before settlement serves the real workflow (consumers
+add or drop items before shipment) without falsifying any retained history —
+because nothing is retained past 出貨. The snapshot and atomicity rules keep each
+order internally consistent while it is open.
 
 ## Technology Constraints
 
@@ -136,4 +149,4 @@ wins.
   for agents and contributors lives in `CLAUDE.md` and MUST stay consistent with
   this constitution.
 
-**Version**: 1.1.2 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-07-01
+**Version**: 1.2.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-07-01

@@ -36,7 +36,7 @@ CREATE TABLE orders (
   -- 寫入端約定：pickup_number = (SELECT COALESCE(MAX(pickup_number),0)+1
   --   FROM orders WHERE pickup_spot_id = $spot)，撞唯一鍵時重試。
   -- 結單會刪除該分組訂單，故每檔團購結單後號碼自然歸 1。
-  pickup_number    INTEGER,
+  pickup_number    INTEGER NOT NULL,
   shipping_address TEXT,
   note             TEXT,
   total            INTEGER NOT NULL DEFAULT 0,

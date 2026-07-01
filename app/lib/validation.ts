@@ -287,3 +287,76 @@ export function validateCreateOrderBody(
     },
   };
 }
+
+/**
+ * 已驗證的「修改訂單品項」單列：
+ * - 帶 `id` → 既有 `order_items` 明細（保留其單價/促銷快照，僅套用新數量）。
+ * - 帶 `productId` → 新增明細（以商品目前單價＋促銷建立快照）。
+ * 兩者恰有其一。
+ */
+export interface ValidatedUpdateOrderItem {
+  id?: number;
+  productId?: number;
+  quantity: number;
+}
+
+/**
+ * 驗證後台「修改訂單品項」請求。金額欄位一律忽略（後端依快照/現價計算）。
+ * - `items` 必為非空陣列（至少保留一項；清空請改用刪除訂單）。
+ * - 每列 `quantity` 為正整數；且恰有 `id` 或 `productId` 其一（皆正整數）。
+ * - 重複的既有 `id`、或重複的新增 `productId`，各自合併數量。
+ */
+export function validateUpdateOrderItemsBody(
+  body: unknown,
+): { value: { items: ValidatedUpdateOrderItem[] } } | { error: NextResponse } {
+  const { items } = (body ?? {}) as { items?: unknown };
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return badRequest("訂單至少需保留一項明細，如需清空請改用刪除訂單");
+  }
+
+  // 既有明細（依 order_items.id）與新增明細（依 productId）分別合併數量。
+  const existingQty = new Map<number, number>();
+  const newQty = new Map<number, number>();
+
+  for (const raw of items) {
+    const { id, productId, quantity } = (raw ?? {}) as {
+      id?: number | string;
+      productId?: number | string;
+      quantity?: number | string;
+    };
+
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty) || qty <= 0) {
+      return badRequest("商品數量需為正整數");
+    }
+
+    const hasId = id !== undefined && id !== null && String(id) !== "";
+    const hasProduct =
+      productId !== undefined && productId !== null && String(productId) !== "";
+    // 必須恰有 id 或 productId 其一。
+    if (hasId === hasProduct) {
+      return badRequest("明細資料格式錯誤");
+    }
+
+    if (hasId) {
+      const n = Number(id);
+      if (!Number.isInteger(n) || n <= 0) return badRequest("明細資料格式錯誤");
+      existingQty.set(n, (existingQty.get(n) ?? 0) + qty);
+    } else {
+      const n = Number(productId);
+      if (!Number.isInteger(n) || n <= 0) return badRequest("商品資料格式錯誤");
+      newQty.set(n, (newQty.get(n) ?? 0) + qty);
+    }
+  }
+
+  const merged: ValidatedUpdateOrderItem[] = [
+    ...[...existingQty.entries()].map(([id, quantity]) => ({ id, quantity })),
+    ...[...newQty.entries()].map(([productId, quantity]) => ({
+      productId,
+      quantity,
+    })),
+  ];
+
+  return { value: { items: merged } };
+}

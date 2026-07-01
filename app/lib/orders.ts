@@ -1,6 +1,9 @@
 import { sql } from "@/app/lib/db";
 import { calcLineSubtotal, type PromoConfig } from "@/app/lib/promotions";
-import type { ValidatedCreateOrder } from "@/app/lib/validation";
+import type {
+  ValidatedCreateOrder,
+  ValidatedUpdateOrderItem,
+} from "@/app/lib/validation";
 
 export interface OrderItemRow {
   id: number;
@@ -24,6 +27,8 @@ export interface OrderRow {
   pickupSpotId: number | null;
   /** 自取點顯示名稱（縣市 + 鄉鎮），由 pickup_spots 即時關聯而來；宅配或取貨點已刪除為 null */
   pickupSpotLabel: string | null;
+  /** 自取點縣市（不含鄉鎮）；宅配或取貨點已刪除為 null。供匯出時依縣市分頁使用。 */
+  pickupSpotCity: string | null;
   /** 自取點鄉鎮（不含縣市）；宅配或取貨點已刪除為 null */
   pickupSpotTownship: string | null;
   /** 所屬路線 id（經取貨點關聯）；宅配、未分路線或取貨點已刪除為 null */
@@ -72,6 +77,7 @@ function assembleOrders(
     deliveryMethod: r.delivery_method as string,
     pickupSpotId: (r.pickup_spot_id as number) ?? null,
     pickupSpotLabel: (r.pickup_spot_label as string) ?? null,
+    pickupSpotCity: (r.pickup_spot_city as string) ?? null,
     pickupSpotTownship: (r.pickup_spot_township as string) ?? null,
     routeId: (r.route_id as number) ?? null,
     routeName: (r.route_name as string) ?? null,
@@ -94,6 +100,7 @@ export async function getOrders(): Promise<OrderRow[]> {
              WHEN ps.id IS NOT NULL THEN ps.city || ' ' || ps.township
              ELSE NULL
            END AS pickup_spot_label,
+           ps.city AS pickup_spot_city,
            ps.township AS pickup_spot_township,
            ps.route_id AS route_id,
            r.name AS route_name
@@ -455,7 +462,7 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
   );
   const subtotalArr = lineItems.map((li) => li.subtotal);
 
-  const insertOnce = async (pickupNumber: number | null): Promise<number> => {
+  const insertOnce = async (pickupNumber: number): Promise<number> => {
     const rows = await sql`
       WITH new_order AS (
         INSERT INTO orders (
@@ -490,17 +497,21 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
     return rows[0].order_id as number;
   };
 
-  if (input.deliveryMethod !== "pickup") {
-    return insertOnce(null);
-  }
+  const spotId = input.deliveryMethod === "pickup" ? input.pickupSpotId : null;
 
-  // 自取：取下一個號碼牌；撞唯一鍵 (pickup_spot_id, pickup_number) 時重算重試。
+  // 自取或宅配：取下一個號碼牌；撞唯一鍵 (pickup_spot_id, pickup_number) 時重算重試。
   for (let attempt = 0; attempt < PICKUP_NUMBER_MAX_RETRY; attempt++) {
-    const [{ next }] = (await sql`
-      SELECT COALESCE(MAX(pickup_number), 0) + 1 AS next
-      FROM orders
-      WHERE pickup_spot_id = ${input.pickupSpotId}
-    `) as { next: number }[];
+    const [{ next }] = (await (spotId !== null
+      ? sql`
+          SELECT COALESCE(MAX(pickup_number), 0) + 1 AS next
+          FROM orders
+          WHERE pickup_spot_id = ${spotId}
+        `
+      : sql`
+          SELECT COALESCE(MAX(pickup_number), 0) + 1 AS next
+          FROM orders
+          WHERE pickup_spot_id IS NULL
+        `)) as { next: number }[];
     try {
       return await insertOnce(next);
     } catch (err) {
@@ -510,6 +521,167 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
     }
   }
   throw new OrderInputError("取貨號碼指派衝突，請稍後再試");
+}
+
+/** 取得單筆訂單（含明細）；不存在回 null。供編輯後回應與內部重載使用。 */
+export async function getOrderById(id: number): Promise<OrderRow | null> {
+  const orderRows = await sql`
+    SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
+           o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
+           CASE
+             WHEN ps.id IS NOT NULL THEN ps.city || ' ' || ps.township
+             ELSE NULL
+           END AS pickup_spot_label,
+           ps.township AS pickup_spot_township,
+           ps.route_id AS route_id,
+           r.name AS route_name
+    FROM orders o
+    LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+    LEFT JOIN routes r ON r.id = ps.route_id
+    WHERE o.id = ${id}
+  `;
+  if (orderRows.length === 0) return null;
+
+  const itemRows = await sql`
+    SELECT id, order_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
+    FROM order_items
+    WHERE order_id = ${id}
+    ORDER BY id
+  `;
+
+  return assembleOrders(orderRows, itemRows)[0];
+}
+
+/** 修改訂單品項時，讀取既有明細快照所用的資料形狀（含 product_id 供保留列重寫）。 */
+interface ExistingItemSnapshot {
+  id: number;
+  product_id: number | null;
+  product_name: string;
+  unit_price: number;
+  promo_type: string | null;
+  promo_config: PromoConfig | null;
+}
+
+/**
+ * 修改一筆訂單的商品明細（新增／移除／改數量）並重算總額。
+ * - 帶 `id` 的列＝既有明細：保留其單價/促銷/商品快照，僅套用新數量並重算小計（FR-009）。
+ * - 帶 `productId` 的列＝新增明細：以商品「目前」單價＋促銷建立快照計算小計（FR-008）。
+ * - 未列出的既有明細＝移除。
+ * 以單一 CTE 原子替換該訂單的 order_items 並更新 orders.total（Neon HTTP 無互動式交易）。
+ * 訂單不存在（並發刪除/出貨）回 null；商品不存在或明細 id 不屬本訂單時拋 OrderInputError。
+ */
+export async function updateOrderItems(
+  id: number,
+  items: ValidatedUpdateOrderItem[],
+): Promise<OrderRow | null> {
+  const orderRows = await sql`SELECT id FROM orders WHERE id = ${id}`;
+  if (orderRows.length === 0) return null;
+
+  // 既有明細快照（含 product_id），供帶 id 的保留列重新寫入。
+  const existingRows = (await sql`
+    SELECT id, product_id, product_name, unit_price, promo_type, promo_config
+    FROM order_items
+    WHERE order_id = ${id}
+  `) as ExistingItemSnapshot[];
+  const existingById = new Map(existingRows.map((r) => [r.id, r]));
+
+  // 新增列所需的商品現值快照。
+  const newProductIds = items
+    .filter((it) => it.productId !== undefined)
+    .map((it) => it.productId!);
+  const products =
+    newProductIds.length > 0
+      ? ((await sql`
+          SELECT id, name, price, promo_type, promo_config
+          FROM products
+          WHERE id = ANY(${newProductIds})
+        `) as ProductSnapshot[])
+      : [];
+  const productById = new Map(products.map((p) => [p.id, p]));
+
+  const lineItems = items.map((it) => {
+    if (it.id !== undefined) {
+      const e = existingById.get(it.id);
+      if (!e) throw new OrderInputError("明細資料錯誤，請重新載入");
+      const promo =
+        e.promo_type && e.promo_config
+          ? { type: e.promo_type, config: e.promo_config }
+          : null;
+      return {
+        productId: e.product_id,
+        productName: e.product_name,
+        unitPrice: e.unit_price,
+        quantity: it.quantity,
+        promoType: e.promo_type,
+        promoConfig: e.promo_config,
+        subtotal: calcLineSubtotal(promo, e.unit_price, it.quantity),
+      };
+    }
+    const p = productById.get(it.productId!);
+    if (!p) throw new OrderInputError("部分商品不存在，請重新選擇");
+    const promo =
+      p.promo_type && p.promo_config
+        ? { type: p.promo_type, config: p.promo_config }
+        : null;
+    return {
+      productId: p.id,
+      productName: p.name,
+      unitPrice: p.price,
+      quantity: it.quantity,
+      promoType: p.promo_type,
+      promoConfig: p.promo_config,
+      subtotal: calcLineSubtotal(promo, p.price, it.quantity),
+    };
+  });
+
+  const total = lineItems.reduce((sum, li) => sum + li.subtotal, 0);
+
+  // unnest 用的平行陣列（promo_config 以 text[] 傳入，於 SELECT 時逐筆轉 jsonb）。
+  const productIdArr = lineItems.map((li) => li.productId);
+  const productNameArr = lineItems.map((li) => li.productName);
+  const unitPriceArr = lineItems.map((li) => li.unitPrice);
+  const quantityArr = lineItems.map((li) => li.quantity);
+  const promoTypeArr = lineItems.map((li) => li.promoType);
+  const promoConfigArr = lineItems.map((li) =>
+    li.promoConfig === null ? null : JSON.stringify(li.promoConfig),
+  );
+  const subtotalArr = lineItems.map((li) => li.subtotal);
+
+  // 單一語句原子替換：del/ins 為資料變更 CTE（即使未被主查詢參照仍會執行），
+  // 主查詢 UPDATE orders 回傳 id；訂單並發消失時回空列。
+  const rows = await sql`
+    WITH del AS (
+      DELETE FROM order_items WHERE order_id = ${id}
+    ),
+    ins AS (
+      INSERT INTO order_items (
+        order_id, product_id, product_name, unit_price, quantity,
+        promo_type, promo_config, subtotal
+      )
+      SELECT ${id}, t.product_id, t.product_name, t.unit_price, t.quantity,
+             t.promo_type, t.promo_config::jsonb, t.subtotal
+      FROM unnest(
+        ${productIdArr}::int[],
+        ${productNameArr}::text[],
+        ${unitPriceArr}::int[],
+        ${quantityArr}::int[],
+        ${promoTypeArr}::text[],
+        ${promoConfigArr}::text[],
+        ${subtotalArr}::int[]
+      ) AS t(product_id, product_name, unit_price, quantity,
+             promo_type, promo_config, subtotal)
+    )
+    UPDATE orders SET total = ${total} WHERE id = ${id} RETURNING id
+  `;
+  if (rows.length === 0) return null;
+
+  return getOrderById(id);
+}
+
+/** 刪除單筆訂單（order_items 由 ON DELETE CASCADE 自動清除）；回傳是否確有刪到。 */
+export async function deleteOrder(id: number): Promise<boolean> {
+  const rows = await sql`DELETE FROM orders WHERE id = ${id} RETURNING id`;
+  return rows.length > 0;
 }
 
 /**

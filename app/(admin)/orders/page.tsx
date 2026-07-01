@@ -18,6 +18,7 @@ import {
   Spin,
   Descriptions,
   Empty,
+  Popconfirm,
 } from "antd";
 import {
   SearchOutlined,
@@ -27,6 +28,7 @@ import {
   FileWordOutlined,
   PlusOutlined,
   DeleteOutlined,
+  EditOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -41,7 +43,13 @@ import type {
 } from "@/app/lib/orders";
 import type { ProductRow } from "@/app/lib/products";
 import type { PickupSpotRow } from "@/app/lib/pickup-spots";
-import { fetchJson, postJson, downloadBlob } from "@/app/lib/api-client";
+import {
+  fetchJson,
+  postJson,
+  putJson,
+  deleteJson,
+  downloadBlob,
+} from "@/app/lib/api-client";
 import { safeFilename, taipeiDateStamp } from "@/app/lib/csv";
 import { PageHeader } from "@/app/components/page-header";
 
@@ -90,6 +98,18 @@ interface CreateOrderFormValues {
   items: OrderItemFormValue[];
 }
 
+/**
+ * 修改訂單的明細列：
+ * - 既有明細帶 `itemId`（＋唯讀顯示用 `productName`），保留原快照僅改數量。
+ * - 新增明細帶 `productId`（自商品清單挑選）。
+ */
+interface EditItemFormValue {
+  itemId?: number;
+  productName?: string;
+  productId?: number;
+  quantity?: number;
+}
+
 export default function OrdersPage() {
   const [routes, setRoutes] = useState<{ id: number; name: string }[]>([]);
   const [hasUnassigned, setHasUnassigned] = useState(false);
@@ -116,6 +136,17 @@ export default function OrdersPage() {
   const watchedMethod = Form.useWatch("deliveryMethod", form);
   const watchedItems = Form.useWatch("items", form);
 
+  // 修改訂單表單狀態
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [editDataLoading, setEditDataLoading] = useState(false);
+  const [editForm] = Form.useForm<{ items: EditItemFormValue[] }>();
+  const watchedEditItems = Form.useWatch("items", editForm);
+
+  // 匯出 CSV 進行中的分組 key（與出貨的 closingKey 分開，兩動作獨立）
+  const [exportingKey, setExportingKey] = useState<string | null>(null);
+
   const productById = useMemo(
     () => new Map(products.map((p) => [p.id, p])),
     [products],
@@ -138,6 +169,37 @@ export default function OrdersPage() {
     }, 0);
   }, [watchedItems, productById]);
 
+  // 編輯中訂單的既有明細（依 order_items.id），供既有列改量時以原快照估算小計。
+  const editItemById = useMemo(
+    () => new Map((editOrder?.items ?? []).map((i) => [i.id, i])),
+    [editOrder],
+  );
+
+  // 編輯視窗即時預估總額：既有列用原快照、新增列用商品現價（與後端計算一致）。
+  const estimatedEditTotal = useMemo(() => {
+    if (!watchedEditItems) return 0;
+    return watchedEditItems.reduce((sum, row) => {
+      const qty = Number(row?.quantity);
+      if (!Number.isInteger(qty) || qty <= 0) return sum;
+      if (row?.itemId != null) {
+        const it = editItemById.get(row.itemId);
+        if (!it) return sum;
+        const promo =
+          it.promoType && it.promoConfig
+            ? { type: it.promoType, config: it.promoConfig }
+            : null;
+        return sum + calcLineSubtotal(promo, it.unitPrice, qty);
+      }
+      const product = row?.productId ? productById.get(row.productId) : undefined;
+      if (!product) return sum;
+      const promo =
+        product.promoType && product.promoConfig
+          ? { type: product.promoType, config: product.promoConfig }
+          : null;
+      return sum + calcLineSubtotal(promo, product.price, qty);
+    }, 0);
+  }, [watchedEditItems, editItemById, productById]);
+
   const openCreateModal = useCallback(async () => {
     setCreateOpen(true);
     setCreateDataLoading(true);
@@ -159,6 +221,38 @@ export default function OrdersPage() {
     setCreateOpen(false);
     form.resetFields();
   }, [form]);
+
+  // 開啟修改視窗：帶入該訂單既有明細（保留 order_items.id），並確保已載入商品清單供新增列挑選。
+  const openEditModal = useCallback(
+    async (order: Order) => {
+      setEditOrder(order);
+      editForm.setFieldsValue({
+        items: order.items.map((i) => ({
+          itemId: i.id,
+          productName: i.productName,
+          quantity: i.quantity,
+        })),
+      });
+      setEditOpen(true);
+      if (products.length === 0) {
+        setEditDataLoading(true);
+        try {
+          setProducts(await fetchJson<ProductRow[]>("/api/products"));
+        } catch {
+          messageApi.error("讀取商品清單失敗");
+        } finally {
+          setEditDataLoading(false);
+        }
+      }
+    },
+    [editForm, products.length, messageApi],
+  );
+
+  const closeEditModal = useCallback(() => {
+    setEditOpen(false);
+    setEditOrder(null);
+    editForm.resetFields();
+  }, [editForm]);
 
   // 進到畫面時僅取得有訂單的路線清單（含未分路線/宅配旗標），不載入全部訂單。
   const fetchRouteOptions = useCallback(async () => {
@@ -254,6 +348,45 @@ export default function OrdersPage() {
     }
   }, [form, messageApi, fetchRouteOptions, fetchOrders, selected]);
 
+  const handleUpdate = useCallback(async () => {
+    if (!editOrder) return;
+    let values: { items: EditItemFormValue[] };
+    try {
+      values = await editForm.validateFields();
+    } catch {
+      return; // 驗證失敗，antd 已標示欄位
+    }
+    const items = (values.items ?? []).map((row) =>
+      row.itemId != null
+        ? { id: row.itemId, quantity: row.quantity }
+        : { productId: row.productId, quantity: row.quantity },
+    );
+    if (items.length === 0) {
+      messageApi.error("訂單至少需保留一項明細，如需清空請改用刪除訂單");
+      return;
+    }
+    setEditing(true);
+    try {
+      await putJson(`/api/orders/${editOrder.id}`, { items });
+      messageApi.success("訂單已更新");
+      closeEditModal();
+      fetchRouteOptions();
+      if (selected) fetchOrders(selected);
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "修改訂單失敗");
+    } finally {
+      setEditing(false);
+    }
+  }, [
+    editOrder,
+    editForm,
+    messageApi,
+    closeEditModal,
+    fetchRouteOptions,
+    fetchOrders,
+    selected,
+  ]);
+
   useEffect(() => {
     fetchRouteOptions();
   }, [fetchRouteOptions]);
@@ -280,15 +413,54 @@ export default function OrdersPage() {
       String(order.id).includes(search),
   );
 
-  const closeGroup = async (group: CloseGroup) => {
+  // 刪除單筆訂單（明細一併清除）；成功後刷新路線清單與目前分組。
+  const removeOrder = async (order: Order) => {
+    try {
+      await deleteJson(`/api/orders/${order.id}`);
+      messageApi.success("訂單已刪除");
+      fetchRouteOptions();
+      if (selected) fetchOrders(selected);
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "刪除訂單失敗");
+    }
+  };
+
+  // 匯出 CSV：僅下載該分組 CSV，不清除任何資料，可重複匯出。
+  const exportGroupCsv = async (group: CloseGroup) => {
     const body = JSON.stringify({
       method: group.method,
       routeId: group.routeId,
     });
     const filename = safeFilename(
-      `orders_${group.display}_${taipeiDateStamp()}.csv`,
+      `orders_${group.display}_${taipeiDateStamp()}.xlsx`,
     );
+    setExportingKey(group.key);
+    try {
+      const res = await fetch("/api/orders/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        messageApi.error(err?.error || "匯出失敗");
+        return;
+      }
+      downloadBlob(await res.blob(), filename);
+      messageApi.success(`「${group.display}」已匯出（依縣市分頁）`);
+    } catch {
+      messageApi.error("匯出失敗，請稍後再試");
+    } finally {
+      setExportingKey(null);
+    }
+  };
 
+  // 出貨：永久清除該分組訂單，不下載 CSV。
+  const shipGroup = async (group: CloseGroup) => {
+    const body = JSON.stringify({
+      method: group.method,
+      routeId: group.routeId,
+    });
     const refresh = () =>
       Promise.all([
         fetchCloseGroups(),
@@ -300,62 +472,41 @@ export default function OrdersPage() {
     setClosingKey(group.key);
     try {
       const res = await fetch("/api/orders/close", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        messageApi.error(err?.error || "結單失敗");
-        return;
-      }
-
-      // 先下載 CSV，確認檔案到手後才清除資料庫
-      downloadBlob(await res.blob(), filename);
-
-      // CSV 已成功下載，再請求刪除該分組
-      const delRes = await fetch("/api/orders/close", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body,
       });
-      if (!delRes.ok) {
-        messageApi.warning("CSV 已下載，但清除訂單失敗，請重新整理後再試");
-        await refresh();
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        messageApi.error(err?.error || "出貨失敗");
         return;
       }
-
-      messageApi.success(`「${group.display}」結單完成，CSV 已下載`);
+      messageApi.success(`「${group.display}」已出貨並清除`);
       await refresh();
     } catch {
-      messageApi.error("結單失敗，請稍後再試");
+      messageApi.error("出貨失敗，請稍後再試");
     } finally {
       setClosing(false);
       setClosingKey(null);
     }
   };
 
-  const handleCloseGroup = (group: CloseGroup) => {
+  const handleShipGroup = (group: CloseGroup) => {
     modal.confirm({
-      title: `確定結單「${group.display}」？`,
+      title: `確定出貨「${group.display}」？`,
       icon: <ExclamationCircleFilled />,
       content: (
         <div>
-          <p>此操作將：</p>
-          <ol style={{ paddingLeft: 20 }}>
-            <li>匯出此分組的 {group.count} 筆訂單為 CSV 下載到本機</li>
-            <li>刪除資料庫中此分組的訂單資料</li>
-          </ol>
+          <p>此操作將永久清除此分組的 {group.count} 筆訂單。</p>
           <p style={{ color: "#ff4d4f", fontWeight: 500 }}>
-            ⚠️ 此操作無法復原，請確認已做好備份！
+            ⚠️ 此操作無法復原！如需備份請先「匯出 CSV」。
           </p>
         </div>
       ),
-      okText: "確定結單",
+      okText: "確定出貨",
       okType: "danger",
       cancelText: "取消",
-      onOk: () => closeGroup(group),
+      onOk: () => shipGroup(group),
     });
   };
 
@@ -365,7 +516,7 @@ export default function OrdersPage() {
       key: "pickupNumber",
       width: 90,
       render: (_: unknown, order: Order) =>
-        order.deliveryMethod === "delivery" || order.pickupNumber == null ? (
+        order.pickupNumber == null ? (
           "-"
         ) : (
           <Tag color="geekblue" style={{ fontSize: 16, fontWeight: 700 }}>
@@ -414,6 +565,31 @@ export default function OrdersPage() {
         new Date(createdAt).toLocaleString("zh-TW", {
           timeZone: "Asia/Taipei",
         }),
+    },
+    {
+      title: "操作",
+      key: "actions",
+      width: 120,
+      align: "center",
+      fixed: "right",
+      render: (_: unknown, order: Order) => (
+        <Space>
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => openEditModal(order)}
+          />
+          <Popconfirm
+            title="確定刪除？"
+            description={`將刪除訂單「#${order.id} (${order.customerName})」`}
+            onConfirm={() => removeOrder(order)}
+            okText="確定"
+            cancelText="取消"
+          >
+            <Button type="link" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
     },
   ];
 
@@ -510,19 +686,12 @@ export default function OrdersPage() {
 
   return (
     <>
-      <Spin spinning={closing} fullscreen description="結單處理中…" />
+      <Spin spinning={closing} fullscreen description="出貨處理中…" />
       <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
           title="訂單管理"
           actions={
             <Space wrap>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={openCreateModal}
-              >
-                新增訂單
-              </Button>
               <Select
                 placeholder="選擇路線"
                 className="w-full sm:w-44"
@@ -580,7 +749,14 @@ export default function OrdersPage() {
                 icon={<DownloadOutlined />}
                 onClick={openCloseModal}
               >
-                結單（依路線匯出並清除）
+                出貨 / 匯出 CSV
+              </Button>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={openCreateModal}
+              >
+                新增訂單
               </Button>
             </Space>
           }
@@ -597,7 +773,7 @@ export default function OrdersPage() {
         >
           <Text type="warning" style={{ fontSize: 13 }}>
             💡 因使用 Neon
-            免費版資料庫，建議定期使用「結單」功能匯出訂單後清除資料，以節省雲端儲存空間。
+            免費版資料庫，建議每檔完成後先「匯出 CSV」備份，再以「出貨」清除該分組資料，以節省雲端儲存空間。
           </Text>
         </div>
 
@@ -625,7 +801,7 @@ export default function OrdersPage() {
       </Card>
 
       <Modal
-        title="結單（依路線）"
+        title="出貨 / 匯出 CSV（依路線）"
         open={closeModalOpen}
         onCancel={() => {
           if (!closing) setCloseModalOpen(false);
@@ -633,8 +809,8 @@ export default function OrdersPage() {
         footer={null}
       >
         <p style={{ color: "#8c8c8c", fontSize: 13 }}>
-          每條路線、「未分路線」與「宅配」各自成一組，下載該組 CSV
-          成功後才會清除該組訂單。
+          每條路線、「未分路線」與「宅配」各自成一組。「匯出 CSV」僅下載、不清除資料且可重複；
+          「出貨」永久清除該組訂單且不下載 CSV，無法復原。
         </p>
         <Spin spinning={groupsLoading}>
           {closeGroups.length === 0 ? (
@@ -664,17 +840,26 @@ export default function OrdersPage() {
                   <Text>{group.display}</Text>
                   <Text type="secondary">{group.count} 筆</Text>
                 </Space>
-                <Button
-                  danger
-                  type="primary"
-                  size="small"
-                  icon={<DownloadOutlined />}
-                  loading={closingKey === group.key}
-                  disabled={closing && closingKey !== group.key}
-                  onClick={() => handleCloseGroup(group)}
-                >
-                  下載並結單
-                </Button>
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<DownloadOutlined />}
+                    loading={exportingKey === group.key}
+                    onClick={() => exportGroupCsv(group)}
+                  >
+                    匯出 CSV
+                  </Button>
+                  <Button
+                    danger
+                    type="primary"
+                    size="small"
+                    loading={closingKey === group.key}
+                    disabled={closing && closingKey !== group.key}
+                    onClick={() => handleShipGroup(group)}
+                  >
+                    出貨
+                  </Button>
+                </Space>
               </div>
             ))
           )}
@@ -845,6 +1030,121 @@ export default function OrdersPage() {
               </Text>
               <Text strong style={{ fontSize: 18, color: "#cf1322" }}>
                 ${estimatedTotal}
+              </Text>
+            </div>
+          </Form>
+        </Spin>
+      </Modal>
+
+      <Modal
+        title={
+          editOrder
+            ? `修改訂單 #${editOrder.id}（${editOrder.customerName}）`
+            : "修改訂單"
+        }
+        open={editOpen}
+        onOk={handleUpdate}
+        onCancel={closeEditModal}
+        okText="儲存"
+        cancelText="取消"
+        confirmLoading={editing}
+        width={720}
+        destroyOnHidden
+      >
+        <Spin spinning={editDataLoading}>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            title="僅可修改商品明細；客戶與取貨資訊不變。既有品項改量沿用原價，新增品項以商品現價計算。"
+          />
+          <Form form={editForm} layout="vertical">
+            <Form.List name="items">
+              {(fields, { add, remove }) => (
+                <div>
+                  <div style={{ marginBottom: 8, fontWeight: 500 }}>
+                    商品明細
+                  </div>
+                  {fields.map((field) => {
+                    const itemId = editForm.getFieldValue([
+                      "items",
+                      field.name,
+                      "itemId",
+                    ]);
+                    const productName = editForm.getFieldValue([
+                      "items",
+                      field.name,
+                      "productName",
+                    ]);
+                    return (
+                      <Space
+                        key={field.key}
+                        align="baseline"
+                        style={{ display: "flex", marginBottom: 8 }}
+                      >
+                        <Form.Item name={[field.name, "itemId"]} hidden>
+                          <Input />
+                        </Form.Item>
+                        <Form.Item name={[field.name, "productName"]} hidden>
+                          <Input />
+                        </Form.Item>
+                        {itemId != null ? (
+                          <div style={{ width: 360 }}>
+                            <Text>{productName}</Text>
+                          </div>
+                        ) : (
+                          <Form.Item
+                            name={[field.name, "productId"]}
+                            rules={[{ required: true, message: "請選擇商品" }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <Select
+                              placeholder="選擇商品"
+                              showSearch={{ optionFilterProp: "label" }}
+                              style={{ width: 360 }}
+                              options={products.map((p) => ({
+                                label: `${p.name}（$${p.price}${p.promoSummary ? ` · ${p.promoSummary}` : ""
+                                  }）`,
+                                value: p.id,
+                              }))}
+                              notFoundContent="尚無商品"
+                            />
+                          </Form.Item>
+                        )}
+                        <Form.Item
+                          name={[field.name, "quantity"]}
+                          rules={[{ required: true, message: "請輸入數量" }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <InputNumber min={1} precision={0} placeholder="數量" />
+                        </Form.Item>
+                        <Button
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => remove(field.name)}
+                        />
+                      </Space>
+                    );
+                  })}
+                  <Button
+                    type="dashed"
+                    onClick={() => add({ quantity: 1 })}
+                    icon={<PlusOutlined />}
+                    block
+                  >
+                    新增商品
+                  </Button>
+                </div>
+              )}
+            </Form.List>
+
+            <div style={{ textAlign: "right", marginTop: 16 }}>
+              <Text type="secondary" style={{ marginRight: 8 }}>
+                預估總額
+              </Text>
+              <Text strong style={{ fontSize: 18, color: "#cf1322" }}>
+                ${estimatedEditTotal}
               </Text>
             </div>
           </Form>
