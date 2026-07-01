@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import * as XLSX from "xlsx";
 import { auth } from "@/auth";
 import {
   getOrders,
@@ -8,6 +7,7 @@ import {
   type OrderRow,
 } from "@/app/lib/orders";
 import { jsonHandler } from "@/app/lib/api";
+import { buildOrdersWorkbook } from "@/app/lib/order-export";
 import { safeFilename, taipeiDateStamp } from "@/app/lib/csv";
 
 interface GroupBody {
@@ -35,39 +35,6 @@ function filterGroup(orders: OrderRow[], body: GroupBody): OrderRow[] {
   );
 }
 
-/** 匯出的欄位表頭（各縣市分頁共用）。 */
-const EXPORT_HEADER = [
-  "取貨號",
-  "客戶姓名",
-  "取貨地點",
-  "購買清單",
-  "訂單總額",
-  "電話",
-  "備註",
-];
-
-/** 單筆訂單轉為一列（電話以文字保留，避免掉開頭 0；xlsx 字串即文字格）。 */
-function orderToRow(order: OrderRow): (string | number)[] {
-  return [
-    order.pickupNumber ?? "",
-    order.customerName,
-    // 取貨地點：自取帶入「鄉鎮」（縣市已由分頁區分），宅配帶入收件地址
-    order.deliveryMethod === "delivery"
-      ? (order.shippingAddress ?? "")
-      : (order.pickupSpotTownship ?? ""),
-    order.items.map((item) => `${item.productName}*${item.quantity}`).join("/"),
-    order.total,
-    order.phone ?? "",
-    order.note ?? "",
-  ];
-}
-
-/** 縣市 → 合法的 Excel 工作表名稱（≤31 字、不含 : \ / ? * [ ]，且不可空）。 */
-function toSheetName(city: string): string {
-  const cleaned = city.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31);
-  return cleaned || "其他";
-}
-
 // 列出可結單分組（各組筆數），供結單視窗顯示。
 export const GET = jsonHandler(async () => {
   const groups = await getCloseGroups();
@@ -88,35 +55,14 @@ export const POST = jsonHandler(async (request) => {
     return NextResponse.json({ error: "此分組目前沒有訂單" }, { status: 400 });
   }
 
-  // 依縣市分頁：宅配歸「宅配」、自取無縣市（取貨點已刪除）歸「未分縣市」。
-  const byCity = new Map<string, OrderRow[]>();
-  for (const order of orders) {
-    const city =
-      order.deliveryMethod === "delivery"
-        ? "宅配"
-        : (order.pickupSpotCity ?? "未分縣市");
-    const bucket = byCity.get(city);
-    if (bucket) bucket.push(order);
-    else byCity.set(city, [order]);
-  }
-
-  // 分頁順序：以縣市名稱穩定排序（zh-Hant）。
-  const cities = [...byCity.keys()].sort((a, b) => a.localeCompare(b, "zh-Hant"));
-
-  const wb = XLSX.utils.book_new();
-  for (const city of cities) {
-    const aoa = [EXPORT_HEADER, ...byCity.get(city)!.map(orderToRow)];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    XLSX.utils.book_append_sheet(wb, ws, toSheetName(city));
-  }
-
-  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  // 依縣市分頁組裝 xlsx（與選取匯出共用同一組裝規則）。
+  const bytes = buildOrdersWorkbook(orders);
 
   const groupName =
     body.method === "delivery" ? "宅配" : (orders[0].routeName ?? "未分路線");
   const filename = safeFilename(`orders_${groupName}_${taipeiDateStamp()}.xlsx`);
 
-  return new Response(new Uint8Array(buf), {
+  return new Response(bytes, {
     status: 200,
     headers: {
       "Content-Type":

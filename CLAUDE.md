@@ -67,5 +67,5 @@ Required: `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `ALLOWED_EMAILS
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/005-order-edit-ship/plan.md`
+`specs/006-order-selection-actions/plan.md`
 <!-- SPECKIT END -->

@@ -85,6 +85,26 @@ export function validatePickupReorderBody(
   return { value: { city, ids: ids as number[] } };
 }
 
+/**
+ * 驗證「依 id 清單」的訂單動作請求（選取出貨／選取匯出）：
+ * `ids` 須為非空、皆正整數、不重複的陣列。回傳去重後的 id 陣列。
+ */
+export function validateOrderIdsBody(
+  body: unknown,
+): { value: number[] } | { error: NextResponse } {
+  const { ids } = (body ?? {}) as { ids?: unknown };
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return badRequest("選取資料格式錯誤");
+  }
+  const allValid = ids.every((id) => Number.isInteger(id) && (id as number) > 0);
+  if (!allValid || new Set(ids).size !== ids.length) {
+    return badRequest("選取資料格式錯誤");
+  }
+
+  return { value: ids as number[] };
+}
+
 /** 已驗證、可直接寫入 DB 的商品欄位（name 僅在新增時存在）。 */
 export interface ValidatedProduct {
   name: string;

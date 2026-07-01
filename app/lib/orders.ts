@@ -120,6 +120,57 @@ export async function getOrders(): Promise<OrderRow[]> {
 }
 
 /**
+ * 依訂單 id 清單取得訂單（含明細），供「選取匯出」使用。
+ * 欄位比照 getOrders（含 pickup_spot_city / pickup_spot_township，供依縣市分頁與取貨地點欄）。
+ * 只回傳仍存在的訂單——清單中已被刪除/出貨的 id 自然略過（FR-010）。
+ */
+export async function getOrdersByIds(ids: number[]): Promise<OrderRow[]> {
+  if (ids.length === 0) return [];
+
+  const orderRows = await sql`
+    SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
+           o.pickup_number, o.shipping_address, o.note, o.total, o.tag, o.created_at,
+           CASE
+             WHEN ps.id IS NOT NULL THEN ps.city || ' ' || ps.township
+             ELSE NULL
+           END AS pickup_spot_label,
+           ps.city AS pickup_spot_city,
+           ps.township AS pickup_spot_township,
+           ps.route_id AS route_id,
+           r.name AS route_name
+    FROM orders o
+    LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+    LEFT JOIN routes r ON r.id = ps.route_id
+    WHERE o.id = ANY(${ids})
+    ORDER BY o.id ASC
+  `;
+
+  if (orderRows.length === 0) return [];
+
+  const orderIds = orderRows.map((r) => r.id as number);
+  const itemRows = await sql`
+    SELECT id, order_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
+    FROM order_items
+    WHERE order_id = ANY(${orderIds})
+    ORDER BY id
+  `;
+
+  return assembleOrders(orderRows, itemRows);
+}
+
+/**
+ * 依訂單 id 清單刪除訂單（order_items 由 ON DELETE CASCADE 一併清除），供「選取出貨」使用。
+ * 單一語句原子；回傳實際刪除筆數（清單中已消失的 id 自然不計入，FR-010）。
+ */
+export async function deleteOrdersByIds(ids: number[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const rows = await sql`
+    DELETE FROM orders WHERE id = ANY(${ids}) RETURNING id
+  `;
+  return rows.length;
+}
+
+/**
  * 依路線取得自取訂單（含明細），按建立時間降冪。
  * `routeId` 為路線 id，或 null（未分路線：取貨點 route_id 為 NULL）。
  * 僅含自取訂單——宅配僅有自由文字地址，無取貨點/路線。

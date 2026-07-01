@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import type { Key } from "react";
 import {
   Card,
   Typography,
@@ -19,6 +20,7 @@ import {
   Descriptions,
   Empty,
   Popconfirm,
+  Checkbox,
 } from "antd";
 import {
   SearchOutlined,
@@ -144,8 +146,13 @@ export default function OrdersPage() {
   const [editForm] = Form.useForm<{ items: EditItemFormValue[] }>();
   const watchedEditItems = Form.useWatch("items", editForm);
 
-  // 匯出 CSV 進行中的分組 key（與出貨的 closingKey 分開，兩動作獨立）
+  // 匯出訂單進行中的分組 key（與出貨的 closingKey 分開，兩動作獨立）
   const [exportingKey, setExportingKey] = useState<string | null>(null);
+
+  // 勾選出貨/匯出狀態：selectedRowKeys 為目前路線視圖中被勾選的訂單 id（跨分頁保留）。
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
+  const [selectionShipping, setSelectionShipping] = useState(false);
+  const [selectionExporting, setSelectionExporting] = useState(false);
 
   const productById = useMemo(
     () => new Map(products.map((p) => [p.id, p])),
@@ -391,8 +398,9 @@ export default function OrdersPage() {
     fetchRouteOptions();
   }, [fetchRouteOptions]);
 
-  // 選定路線變動時查詢；未選則清空結果
+  // 選定路線變動時查詢；未選則清空結果。切換路線一律清空勾選（FR-011：勾選限單一路線視圖）。
   useEffect(() => {
+    setSelectedRowKeys([]);
     if (selected) fetchOrders(selected);
     else setData([]);
   }, [selected, fetchOrders]);
@@ -413,6 +421,26 @@ export default function OrdersPage() {
       String(order.id).includes(search),
   );
 
+  // 表頭全選：涵蓋目前篩選結果的所有分頁（非僅目前頁）。
+  const filteredKeys = filtered.map((o) => o.id);
+  const selectedKeySet = new Set(selectedRowKeys);
+  const allFilteredSelected =
+    filteredKeys.length > 0 && filteredKeys.every((k) => selectedKeySet.has(k));
+  const someFilteredSelected = filteredKeys.some((k) => selectedKeySet.has(k));
+
+  // 勾選/取消目前篩選結果的全部訂單（跨分頁），保留篩選範圍外已勾選者不變。
+  const toggleSelectAllFiltered = (checked: boolean) => {
+    setSelectedRowKeys((prev) => {
+      if (checked) {
+        const set = new Set(prev);
+        filteredKeys.forEach((k) => set.add(k));
+        return [...set];
+      }
+      const fset = new Set<Key>(filteredKeys);
+      return prev.filter((k) => !fset.has(k));
+    });
+  };
+
   // 刪除單筆訂單（明細一併清除）；成功後刷新路線清單與目前分組。
   const removeOrder = async (order: Order) => {
     try {
@@ -425,14 +453,14 @@ export default function OrdersPage() {
     }
   };
 
-  // 匯出 CSV：僅下載該分組 CSV，不清除任何資料，可重複匯出。
+  // 匯出訂單：僅下載該分組訂單，不清除任何資料，可重複匯出。
   const exportGroupCsv = async (group: CloseGroup) => {
     const body = JSON.stringify({
       method: group.method,
       routeId: group.routeId,
     });
     const filename = safeFilename(
-      `orders_${group.display}_${taipeiDateStamp()}.xlsx`,
+      `訂單_${group.display}_${taipeiDateStamp()}.xlsx`,
     );
     setExportingKey(group.key);
     try {
@@ -498,8 +526,13 @@ export default function OrdersPage() {
       content: (
         <div>
           <p>此操作將永久清除此分組的 {group.count} 筆訂單。</p>
-          <p style={{ color: "#ff4d4f", fontWeight: 500 }}>
-            ⚠️ 此操作無法復原！如需備份請先「匯出 CSV」。
+          <p
+            style={{
+              color: "#ff4d4f",
+              whiteSpace: "nowrap",
+            }}
+          >
+            ⚠️ 此操作無法復原！如需備份請先「匯出訂單」。
           </p>
         </div>
       ),
@@ -508,6 +541,84 @@ export default function OrdersPage() {
       cancelText: "取消",
       onOk: () => shipGroup(group),
     });
+  };
+
+  // 出貨選取：永久清除被勾選的訂單（依 id 清單），成功後清空勾選並刷新（FR-003/009）。
+  const shipSelected = async () => {
+    const ids = selectedRowKeys.map(Number);
+    setSelectionShipping(true);
+    try {
+      const { deleted } = await deleteJson<{ deleted: number }>(
+        "/api/orders/selection",
+        { ids },
+      );
+      messageApi.success(`已出貨並清除 ${deleted} 筆訂單`);
+      setSelectedRowKeys([]);
+      fetchRouteOptions();
+      if (selected) fetchOrders(selected);
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "出貨失敗");
+    } finally {
+      setSelectionShipping(false);
+    }
+  };
+
+  // 出貨選取前二次確認，載明筆數與無法復原警語、建議先匯出備份（FR-006）。
+  const handleShipSelected = () => {
+    const count = selectedRowKeys.length;
+    modal.confirm({
+      title: `確定出貨所選 ${count} 筆訂單？`,
+      icon: <ExclamationCircleFilled />,
+      width: 500,
+      content: (
+        <div>
+          <p>此操作將永久清除所選的 {count} 筆訂單。</p>
+          <p style={{ color: "#ff4d4f", fontWeight: 500 }}>
+            ⚠️ 此操作無法復原！如需備份請先「匯出選取訂單」。
+          </p>
+        </div>
+      ),
+      okText: "確定出貨",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: shipSelected,
+    });
+  };
+
+  // 匯出選取訂單：依 id 清單下載 xlsx（依縣市分頁），不清除資料且保留勾選（可重複，FR-004）。
+  const exportSelected = async () => {
+    const ids = selectedRowKeys.map(Number);
+    const route = routes.find((r) => String(r.id) === selected);
+    const selectedDisplay =
+      selected === UNASSIGNED
+        ? "未分路線"
+        : selected === DELIVERY
+        ? "宅配"
+        : route
+        ? route.name
+        : "";
+    const filename = safeFilename(
+      `訂單_${selectedDisplay}_${taipeiDateStamp()}.xlsx`,
+    );
+    setSelectionExporting(true);
+    try {
+      const res = await fetch("/api/orders/selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        messageApi.error(err?.error || "匯出失敗");
+        return;
+      }
+      downloadBlob(await res.blob(), filename);
+      messageApi.success(`已匯出所選 ${ids.length} 筆訂單（依縣市分頁）`);
+    } catch {
+      messageApi.error("匯出失敗，請稍後再試");
+    } finally {
+      setSelectionExporting(false);
+    }
   };
 
   const columns: ColumnsType<Order> = [
@@ -749,7 +860,7 @@ export default function OrdersPage() {
                 icon={<DownloadOutlined />}
                 onClick={openCloseModal}
               >
-                出貨 / 匯出 CSV
+                出貨 / 匯出訂單
               </Button>
               <Button
                 type="primary"
@@ -772,8 +883,7 @@ export default function OrdersPage() {
           }}
         >
           <Text type="warning" style={{ fontSize: 13 }}>
-            💡 因使用 Neon
-            免費版資料庫，建議每檔完成後先「匯出 CSV」備份，再以「出貨」清除該分組資料，以節省雲端儲存空間。
+            💡 因使用 Neon 免費版資料庫，建議定期「匯出訂單」備份，再以「出貨」清除該分組資料，以節省雲端儲存空間。
           </Text>
         </div>
 
@@ -783,25 +893,74 @@ export default function OrdersPage() {
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           />
         ) : (
-          <Spin spinning={loading}>
-            <Table
-              rowKey="id"
-              columns={columns}
-              dataSource={filtered}
-              expandable={{
-                expandedRowRender,
-                rowExpandable: () => true,
+          <>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 12,
+                flexWrap: "wrap",
               }}
-              pagination={{ defaultPageSize: 10, showSizeChanger: true }}
-              locale={{ emptyText: "此路線目前沒有訂單" }}
-              scroll={{ x: "max-content" }}
-            />
-          </Spin>
+            >
+              <Text>
+                已選 <Text strong>{selectedRowKeys.length}</Text> 筆
+              </Text>
+              <Button
+                icon={<DownloadOutlined />}
+                disabled={selectedRowKeys.length === 0}
+                loading={selectionExporting}
+                onClick={exportSelected}
+              >
+                匯出選取訂單
+              </Button>
+              <Button
+                danger
+                type="primary"
+                disabled={selectedRowKeys.length === 0}
+                loading={selectionShipping}
+                onClick={handleShipSelected}
+              >
+                出貨
+              </Button>
+            </div>
+            <Spin spinning={loading}>
+              <Table
+                rowKey="id"
+                columns={columns}
+                dataSource={filtered}
+                rowSelection={{
+                  selectedRowKeys,
+                  onChange: setSelectedRowKeys,
+                  preserveSelectedRowKeys: true,
+                  columnTitle: (
+                    <Checkbox
+                      checked={allFilteredSelected}
+                      indeterminate={
+                        !allFilteredSelected && someFilteredSelected
+                      }
+                      disabled={filteredKeys.length === 0}
+                      onChange={(e) =>
+                        toggleSelectAllFiltered(e.target.checked)
+                      }
+                    />
+                  ),
+                }}
+                expandable={{
+                  expandedRowRender,
+                  rowExpandable: () => true,
+                }}
+                pagination={{ defaultPageSize: 10, showSizeChanger: true }}
+                locale={{ emptyText: "此路線目前沒有訂單" }}
+                scroll={{ x: "max-content" }}
+              />
+            </Spin>
+          </>
         )}
       </Card>
 
       <Modal
-        title="出貨 / 匯出 CSV（依路線）"
+        title="出貨 / 匯出訂單（依路線）"
         open={closeModalOpen}
         onCancel={() => {
           if (!closing) setCloseModalOpen(false);
@@ -809,8 +968,8 @@ export default function OrdersPage() {
         footer={null}
       >
         <p style={{ color: "#8c8c8c", fontSize: 13 }}>
-          每條路線、「未分路線」與「宅配」各自成一組。「匯出 CSV」僅下載、不清除資料且可重複；
-          「出貨」永久清除該組訂單且不下載 CSV，無法復原。
+          每條路線、「未分路線」與「宅配」各自成一組。「匯出訂單」僅下載、不清除資料；
+          「出貨」永久清除該組訂單且不下載訂單，無法復原。
         </p>
         <Spin spinning={groupsLoading}>
           {closeGroups.length === 0 ? (
@@ -847,7 +1006,7 @@ export default function OrdersPage() {
                     loading={exportingKey === group.key}
                     onClick={() => exportGroupCsv(group)}
                   >
-                    匯出 CSV
+                    匯出訂單
                   </Button>
                   <Button
                     danger
@@ -875,6 +1034,7 @@ export default function OrdersPage() {
         cancelText="取消"
         confirmLoading={creating}
         width={720}
+        style={{ top: 20 }}
         destroyOnHidden
       >
         <Spin spinning={createDataLoading}>
@@ -892,7 +1052,7 @@ export default function OrdersPage() {
               name="customerName"
               rules={[{ required: true, message: "請輸入客戶姓名" }]}
             >
-              <Input placeholder="客戶姓名" maxLength={100} />
+              <Input placeholder="客戶姓名" maxLength={100} autoFocus />
             </Form.Item>
 
             <Space size="middle" className="w-full" wrap>
@@ -967,22 +1127,27 @@ export default function OrdersPage() {
                 <div>
                   <div style={{ marginBottom: 8, fontWeight: 500 }}>商品明細</div>
                   {fields.map((field) => (
-                    <Space
+                    <div
                       key={field.key}
-                      align="baseline"
-                      style={{ display: "flex", marginBottom: 8 }}
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "8px",
+                        alignItems: "flex-start",
+                        marginBottom: 12,
+                      }}
                     >
                       <Form.Item
                         name={[field.name, "productId"]}
                         rules={[{ required: true, message: "請選擇商品" }]}
-                        style={{ marginBottom: 0 }}
+                        style={{ marginBottom: 0, flex: "1 1 280px" }}
                       >
                         <Select
                           placeholder="選擇商品"
                           showSearch={{
                             optionFilterProp: 'label'
                           }}
-                          style={{ width: 360 }}
+                          style={{ width: "100%" }}
                           options={products.map((p) => ({
                             label: `${p.name}（$${p.price}${p.promoSummary ? ` · ${p.promoSummary}` : ""
                               }）`,
@@ -991,22 +1156,25 @@ export default function OrdersPage() {
                           notFoundContent="尚無商品"
                         />
                       </Form.Item>
-                      <Form.Item
-                        name={[field.name, "quantity"]}
-                        rules={[{ required: true, message: "請輸入數量" }]}
-                        style={{ marginBottom: 0 }}
-                      >
-                        <InputNumber min={1} precision={0} placeholder="數量" />
-                      </Form.Item>
-                      {fields.length > 1 && (
-                        <Button
-                          type="text"
-                          danger
-                          icon={<DeleteOutlined />}
-                          onClick={() => remove(field.name)}
-                        />
-                      )}
-                    </Space>
+                      <div style={{ display: "flex", gap: "8px", flex: "0 0 auto", alignItems: "center" }}>
+                        <Form.Item
+                          name={[field.name, "quantity"]}
+                          rules={[{ required: true, message: "請輸入數量" }]}
+                          style={{ marginBottom: 0 }}
+                        >
+                          <InputNumber min={1} precision={0} placeholder="數量" style={{ width: 80 }} />
+                        </Form.Item>
+                        {fields.length > 1 && (
+                          <Button
+                            type="text"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => remove(field.name)}
+                            style={{ height: 32 }}
+                          />
+                        )}
+                      </div>
+                    </div>
                   ))}
                   <Button
                     type="dashed"
@@ -1049,6 +1217,7 @@ export default function OrdersPage() {
         cancelText="取消"
         confirmLoading={editing}
         width={720}
+        style={{ top: 20 }}
         destroyOnHidden
       >
         <Spin spinning={editDataLoading}>
@@ -1077,10 +1246,15 @@ export default function OrdersPage() {
                       "productName",
                     ]);
                     return (
-                      <Space
+                      <div
                         key={field.key}
-                        align="baseline"
-                        style={{ display: "flex", marginBottom: 8 }}
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: "8px",
+                          alignItems: "flex-start",
+                          marginBottom: 12,
+                        }}
                       >
                         <Form.Item name={[field.name, "itemId"]} hidden>
                           <Input />
@@ -1089,19 +1263,19 @@ export default function OrdersPage() {
                           <Input />
                         </Form.Item>
                         {itemId != null ? (
-                          <div style={{ width: 360 }}>
+                          <div style={{ flex: "1 1 280px", minWidth: 0, paddingTop: 4 }}>
                             <Text>{productName}</Text>
                           </div>
                         ) : (
                           <Form.Item
                             name={[field.name, "productId"]}
                             rules={[{ required: true, message: "請選擇商品" }]}
-                            style={{ marginBottom: 0 }}
+                            style={{ marginBottom: 0, flex: "1 1 280px" }}
                           >
                             <Select
                               placeholder="選擇商品"
                               showSearch={{ optionFilterProp: "label" }}
-                              style={{ width: 360 }}
+                              style={{ width: "100%" }}
                               options={products.map((p) => ({
                                 label: `${p.name}（$${p.price}${p.promoSummary ? ` · ${p.promoSummary}` : ""
                                   }）`,
@@ -1111,20 +1285,23 @@ export default function OrdersPage() {
                             />
                           </Form.Item>
                         )}
-                        <Form.Item
-                          name={[field.name, "quantity"]}
-                          rules={[{ required: true, message: "請輸入數量" }]}
-                          style={{ marginBottom: 0 }}
-                        >
-                          <InputNumber min={1} precision={0} placeholder="數量" />
-                        </Form.Item>
-                        <Button
-                          type="text"
-                          danger
-                          icon={<DeleteOutlined />}
-                          onClick={() => remove(field.name)}
-                        />
-                      </Space>
+                        <div style={{ display: "flex", gap: "8px", flex: "0 0 auto", alignItems: "center" }}>
+                          <Form.Item
+                            name={[field.name, "quantity"]}
+                            rules={[{ required: true, message: "請輸入數量" }]}
+                            style={{ marginBottom: 0 }}
+                          >
+                            <InputNumber min={1} precision={0} placeholder="數量" style={{ width: 80 }} />
+                          </Form.Item>
+                          <Button
+                            type="text"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => remove(field.name)}
+                            style={{ height: 32 }}
+                          />
+                        </div>
+                      </div>
                     );
                   })}
                   <Button
