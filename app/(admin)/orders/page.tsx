@@ -41,7 +41,6 @@ import {
 import type {
   OrderRow as Order,
   OrderItemRow as OrderItem,
-  CloseGroupSummary as CloseGroup,
 } from "@/app/lib/orders";
 import type { ProductRow } from "@/app/lib/products";
 import type { PickupSpotRow } from "@/app/lib/pickup-spots";
@@ -120,11 +119,6 @@ export default function OrdersPage() {
   const [selected, setSelected] = useState<string | undefined>();
   const [data, setData] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const [closeModalOpen, setCloseModalOpen] = useState(false);
-  const [closeGroups, setCloseGroups] = useState<CloseGroup[]>([]);
-  const [groupsLoading, setGroupsLoading] = useState(false);
-  const [closingKey, setClosingKey] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const { modal, message: messageApi } = App.useApp();
 
@@ -145,9 +139,6 @@ export default function OrdersPage() {
   const [editDataLoading, setEditDataLoading] = useState(false);
   const [editForm] = Form.useForm<{ items: EditItemFormValue[] }>();
   const watchedEditItems = Form.useWatch("items", editForm);
-
-  // 匯出訂單進行中的分組 key（與出貨的 closingKey 分開，兩動作獨立）
-  const [exportingKey, setExportingKey] = useState<string | null>(null);
 
   // 勾選出貨/匯出狀態：selectedRowKeys 為目前路線視圖中被勾選的訂單 id（跨分頁保留）。
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
@@ -303,21 +294,6 @@ export default function OrdersPage() {
     [messageApi],
   );
 
-  // 取得各結單分組筆數（結單視窗使用），不需載入全部訂單明細
-  const fetchCloseGroups = useCallback(async () => {
-    setGroupsLoading(true);
-    try {
-      const data = await fetchJson<{ groups: CloseGroup[] }>(
-        "/api/orders/close",
-      );
-      setCloseGroups(data.groups);
-    } catch {
-      messageApi.error("讀取結單分組失敗");
-    } finally {
-      setGroupsLoading(false);
-    }
-  }, [messageApi]);
-
   const handleCreate = useCallback(async () => {
     let values: CreateOrderFormValues;
     try {
@@ -405,11 +381,6 @@ export default function OrdersPage() {
     else setData([]);
   }, [selected, fetchOrders]);
 
-  const openCloseModal = () => {
-    setCloseModalOpen(true);
-    fetchCloseGroups();
-  };
-
   const filtered = data.filter(
     (order) =>
       order.customerName.includes(search) ||
@@ -451,96 +422,6 @@ export default function OrdersPage() {
     } catch (err) {
       messageApi.error(err instanceof Error ? err.message : "刪除訂單失敗");
     }
-  };
-
-  // 匯出訂單：僅下載該分組訂單，不清除任何資料，可重複匯出。
-  const exportGroupCsv = async (group: CloseGroup) => {
-    const body = JSON.stringify({
-      method: group.method,
-      routeId: group.routeId,
-    });
-    const filename = safeFilename(
-      `訂單_${group.display}_${taipeiDateStamp()}.xlsx`,
-    );
-    setExportingKey(group.key);
-    try {
-      const res = await fetch("/api/orders/close", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        messageApi.error(err?.error || "匯出失敗");
-        return;
-      }
-      downloadBlob(await res.blob(), filename);
-      messageApi.success(`「${group.display}」已匯出（依縣市分頁）`);
-    } catch {
-      messageApi.error("匯出失敗，請稍後再試");
-    } finally {
-      setExportingKey(null);
-    }
-  };
-
-  // 出貨：永久清除該分組訂單，不下載 CSV。
-  const shipGroup = async (group: CloseGroup) => {
-    const body = JSON.stringify({
-      method: group.method,
-      routeId: group.routeId,
-    });
-    const refresh = () =>
-      Promise.all([
-        fetchCloseGroups(),
-        fetchRouteOptions(),
-        selected ? fetchOrders(selected) : Promise.resolve(),
-      ]);
-
-    setClosing(true);
-    setClosingKey(group.key);
-    try {
-      const res = await fetch("/api/orders/close", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        messageApi.error(err?.error || "出貨失敗");
-        return;
-      }
-      messageApi.success(`「${group.display}」已出貨並清除`);
-      await refresh();
-    } catch {
-      messageApi.error("出貨失敗，請稍後再試");
-    } finally {
-      setClosing(false);
-      setClosingKey(null);
-    }
-  };
-
-  const handleShipGroup = (group: CloseGroup) => {
-    modal.confirm({
-      title: `確定出貨「${group.display}」？`,
-      icon: <ExclamationCircleFilled />,
-      content: (
-        <div>
-          <p>此操作將永久清除此分組的 {group.count} 筆訂單。</p>
-          <p
-            style={{
-              color: "#ff4d4f",
-              whiteSpace: "nowrap",
-            }}
-          >
-            ⚠️ 此操作無法復原！如需備份請先「匯出訂單」。
-          </p>
-        </div>
-      ),
-      okText: "確定出貨",
-      okType: "danger",
-      cancelText: "取消",
-      onOk: () => shipGroup(group),
-    });
   };
 
   // 出貨選取：永久清除被勾選的訂單（依 id 清單），成功後清空勾選並刷新（FR-003/009）。
@@ -797,7 +678,6 @@ export default function OrdersPage() {
 
   return (
     <>
-      <Spin spinning={closing} fullscreen description="出貨處理中…" />
       <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
           title="訂單管理"
@@ -853,14 +733,6 @@ export default function OrdersPage() {
                 download="標籤.docx"
               >
                 下載標籤範本
-              </Button>
-              <Button
-                danger
-                type="primary"
-                icon={<DownloadOutlined />}
-                onClick={openCloseModal}
-              >
-                出貨 / 匯出訂單
               </Button>
               <Button
                 type="primary"
@@ -958,72 +830,6 @@ export default function OrdersPage() {
           </>
         )}
       </Card>
-
-      <Modal
-        title="出貨 / 匯出訂單（依路線）"
-        open={closeModalOpen}
-        onCancel={() => {
-          if (!closing) setCloseModalOpen(false);
-        }}
-        footer={null}
-      >
-        <p style={{ color: "#8c8c8c", fontSize: 13 }}>
-          每條路線、「未分路線」與「宅配」各自成一組。「匯出訂單」僅下載、不清除資料；
-          「出貨」永久清除該組訂單且不下載訂單，無法復原。
-        </p>
-        <Spin spinning={groupsLoading}>
-          {closeGroups.length === 0 ? (
-            <Empty
-              description={groupsLoading ? "讀取中…" : "目前沒有訂單"}
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-            />
-          ) : (
-            closeGroups.map((group) => (
-              <div
-                key={group.key}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  padding: "12px 0",
-                  borderBottom: "1px solid #f0f0f0",
-                }}
-              >
-                <Space>
-                  {group.method === "delivery" ? (
-                    <Tag color="purple">宅配</Tag>
-                  ) : (
-                    <Tag color="cyan">路線</Tag>
-                  )}
-                  <Text>{group.display}</Text>
-                  <Text type="secondary">{group.count} 筆</Text>
-                </Space>
-                <Space>
-                  <Button
-                    size="small"
-                    icon={<DownloadOutlined />}
-                    loading={exportingKey === group.key}
-                    onClick={() => exportGroupCsv(group)}
-                  >
-                    匯出訂單
-                  </Button>
-                  <Button
-                    danger
-                    type="primary"
-                    size="small"
-                    loading={closingKey === group.key}
-                    disabled={closing && closingKey !== group.key}
-                    onClick={() => handleShipGroup(group)}
-                  >
-                    出貨
-                  </Button>
-                </Space>
-              </div>
-            ))
-          )}
-        </Spin>
-      </Modal>
 
       <Modal
         title="新增訂單"
