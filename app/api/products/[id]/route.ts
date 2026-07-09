@@ -1,12 +1,17 @@
 import {
   deleteProduct,
-  getProductImageUrl,
+  getProductImageUrls,
+  saveProductImages,
   updateProductDetails,
 } from "@/app/lib/products";
 import { jsonHandler } from "@/app/lib/api";
 import { deleteCloudinaryImage } from "@/app/lib/cloudinary";
 import { revalidateCache } from "@/app/lib/revalidate";
-import { parseId, validateProductBody } from "@/app/lib/validation";
+import {
+  parseId,
+  validateProductBody,
+  validateProductImages,
+} from "@/app/lib/validation";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -21,12 +26,16 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
   if ("error" in parsed) return parsed.error;
   const p = parsed.value;
 
-  const { oldImageUrl } = body as { oldImageUrl?: string };
+  const images = validateProductImages((body as { imageUrls?: unknown }).imageUrls);
+  if ("error" in images) return images.error;
+  const newImageUrls = images.value;
 
+  // 先取舊圖集合以便算差集，再原子寫入新集合（含封面鏡射）與其餘欄位。
+  const oldImageUrls = await getProductImageUrls(id);
+  await saveProductImages(id, newImageUrls);
   await updateProductDetails(
     id,
     p.price,
-    p.imageUrl,
     p.categoryId,
     p.spec,
     p.description,
@@ -34,9 +43,9 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
     p.promoConfig,
   );
 
-  if (oldImageUrl && oldImageUrl !== p.imageUrl) {
-    await deleteCloudinaryImage(oldImageUrl);
-  }
+  // 刪除「舊有但已不在新集合」的圖，避免 Cloudinary 孤兒；不誤刪仍在用的圖。
+  const removed = oldImageUrls.filter((url) => !newImageUrls.includes(url));
+  await Promise.all(removed.map((url) => deleteCloudinaryImage(url)));
 
   await revalidateCache("products");
   return { success: true };
@@ -48,13 +57,12 @@ export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
   if ("error" in parsed) return parsed.error;
   const { id } = parsed;
 
-  const imageUrl = await getProductImageUrl(id);
+  // 先取全部圖 URL，刪商品（CASCADE 清 product_images）後再刪 Cloudinary 全部檔。
+  const imageUrls = await getProductImageUrls(id);
 
   await deleteProduct(id);
 
-  if (imageUrl) {
-    await deleteCloudinaryImage(imageUrl);
-  }
+  await Promise.all(imageUrls.map((url) => deleteCloudinaryImage(url)));
 
   await revalidateCache("products");
   await revalidateCache("categories");

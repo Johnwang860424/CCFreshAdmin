@@ -105,11 +105,39 @@ export function validateOrderIdsBody(
   return { value: ids as number[] };
 }
 
-/** 已驗證、可直接寫入 DB 的商品欄位（name 僅在新增時存在）。 */
+/** 單一商品的圖片張數上限（見 spec FR-011）。 */
+export const MAX_PRODUCT_IMAGES = 8;
+
+/**
+ * 驗證商品圖片集合：`imageUrls` 須為 1–8 個非空字串的陣列（有序，index 0 為封面）。
+ * 回傳已驗證、去除前後空白後的 URL 陣列。
+ */
+export function validateProductImages(
+  imageUrls: unknown,
+): { value: string[] } | { error: NextResponse } {
+  if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
+    return badRequest(`商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張`);
+  }
+  if (imageUrls.length > MAX_PRODUCT_IMAGES) {
+    return badRequest(`商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張`);
+  }
+  const cleaned: string[] = [];
+  for (const url of imageUrls) {
+    if (typeof url !== "string" || url.trim() === "") {
+      return badRequest(`商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張`);
+    }
+    cleaned.push(url.trim());
+  }
+  return { value: cleaned };
+}
+
+/**
+ * 已驗證、可直接寫入 DB 的商品非圖片欄位（name 僅在新增時存在）。
+ * 圖片集合另由 validateProductImages 驗證，不在此結構內。
+ */
 export interface ValidatedProduct {
   name: string;
   price: number;
-  imageUrl: string;
   categoryId: number;
   spec: string | null;
   description: string | null;
@@ -118,32 +146,24 @@ export interface ValidatedProduct {
 }
 
 /**
- * 驗證商品新增/更新請求的共用欄位（價格、分類、長度、優惠）。
+ * 驗證商品新增/更新請求的共用「非圖片」欄位（價格、分類、長度、優惠）。
+ * 圖片以 validateProductImages 另行驗證。
  * `requireName` 為 true（新增）時額外驗證並回傳 name；更新時 name 不可變，回傳空字串。
  */
 export function validateProductBody(
   body: unknown,
   { requireName }: { requireName: boolean },
 ): { value: ValidatedProduct } | { error: NextResponse } {
-  const {
-    name,
-    price,
-    imageUrl,
-    categoryId,
-    spec,
-    description,
-    promoType,
-    promoConfig,
-  } = (body ?? {}) as {
-    name?: string;
-    price?: number | string;
-    imageUrl?: string;
-    categoryId?: number | string;
-    spec?: string;
-    description?: string;
-    promoType?: string | null;
-    promoConfig?: unknown;
-  };
+  const { name, price, categoryId, spec, description, promoType, promoConfig } =
+    (body ?? {}) as {
+      name?: string;
+      price?: number | string;
+      categoryId?: number | string;
+      spec?: string;
+      description?: string;
+      promoType?: string | null;
+      promoConfig?: unknown;
+    };
 
   const priceNum = Number(price);
   const priceValid =
@@ -152,14 +172,14 @@ export function validateProductBody(
   let nameVal = "";
   if (requireName) {
     nameVal = name?.trim() ?? "";
-    if (!nameVal || !priceValid || !imageUrl) {
-      return badRequest("商品名稱、有效價格（非負整數）和圖片為必填欄位");
+    if (!nameVal || !priceValid) {
+      return badRequest("商品名稱和有效價格（非負整數）為必填欄位");
     }
     if (nameVal.length > MAX_LEN.name) {
       return badRequest(`商品名稱不可超過 ${MAX_LEN.name} 字`);
     }
-  } else if (!priceValid || !imageUrl) {
-    return badRequest("有效價格（非負整數）和圖片為必填欄位");
+  } else if (!priceValid) {
+    return badRequest("有效價格（非負整數）為必填欄位");
   }
 
   if (spec && spec.length > MAX_LEN.spec) {
@@ -183,7 +203,6 @@ export function validateProductBody(
     value: {
       name: nameVal,
       price: priceNum,
-      imageUrl: imageUrl!,
       categoryId: categoryNum,
       spec: spec?.trim() || null,
       description: description?.trim() || null,

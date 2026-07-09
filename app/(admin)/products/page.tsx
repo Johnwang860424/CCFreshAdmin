@@ -54,6 +54,7 @@ import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
+  rectSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -73,6 +74,99 @@ interface Category {
 }
 
 const promoFieldName = (configKey: string) => `promo_${configKey}`;
+
+/** 單一商品圖片張數上限（對應後端 validateProductImages 的 MAX_PRODUCT_IMAGES）。 */
+const MAX_PRODUCT_IMAGES = 8;
+
+/** 可拖拉排序的圖片縮圖；id 為圖片 URL。第一張即封面。 */
+function SortableThumb({
+  url,
+  index,
+  disabled,
+  onRemove,
+}: {
+  url: string;
+  index: number;
+  disabled: boolean;
+  onRemove: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: url });
+
+  const style: CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    position: "relative",
+    width: 96,
+    height: 96,
+    ...(isDragging ? { zIndex: 9999 } : {}),
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <div
+        {...attributes}
+        {...listeners}
+        style={{
+          width: "100%",
+          height: "100%",
+          cursor: disabled ? "not-allowed" : "move",
+          touchAction: "none",
+          border: "1px solid #d9d9d9",
+          borderRadius: 8,
+          overflow: "hidden",
+        }}
+      >
+        <Image
+          src={url}
+          alt="product"
+          preview={false}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      </div>
+      {index === 0 && (
+        <Tag
+          color="blue"
+          style={{
+            position: "absolute",
+            bottom: 2,
+            left: 2,
+            margin: 0,
+            fontSize: 10,
+            lineHeight: "16px",
+            padding: "0 4px",
+          }}
+        >
+          封面
+        </Tag>
+      )}
+      {!disabled && (
+        <CloseCircleFilled
+          style={{
+            position: "absolute",
+            top: -8,
+            right: -8,
+            fontSize: 18,
+            color: "#ff4d4f",
+            background: "#fff",
+            borderRadius: "50%",
+            cursor: "pointer",
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+        />
+      )}
+    </div>
+  );
+}
 
 // ── 拖拉排序：dnd-kit + antd Table 自訂列 ──────────────────────────────
 interface RowContextProps {
@@ -143,7 +237,7 @@ export default function ProductsPage() {
   const [reordering, setReordering] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
-  const [currentImageUrl, setCurrentImageUrl] = useState("");
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [imageError, setImageError] = useState("");
   const uploadedImageUrlsRef = useRef<string[]>([]);
   const [form] = Form.useForm();
@@ -203,7 +297,7 @@ export default function ProductsPage() {
 
   const openModal = (record?: Product) => {
     setEditing(record ?? null);
-    setCurrentImageUrl(record?.imageUrl ?? "");
+    setImageUrls(record?.images ?? []);
     setImageError("");
     uploadedImageUrlsRef.current = [];
     setModalOpen(true);
@@ -212,7 +306,7 @@ export default function ProductsPage() {
   const closeModal = () => {
     setModalOpen(false);
     setEditing(null);
-    setCurrentImageUrl("");
+    setImageUrls([]);
     setImageError("");
     uploadedImageUrlsRef.current = [];
   };
@@ -239,7 +333,7 @@ export default function ProductsPage() {
         method: "POST",
         body: formData,
       });
-      setCurrentImageUrl(url);
+      setImageUrls((prev) => [...prev, url]);
       uploadedImageUrlsRef.current = [...uploadedImageUrlsRef.current, url];
       setImageError("");
       onSuccess?.(url);
@@ -249,6 +343,35 @@ export default function ProductsPage() {
     } finally {
       setUploading(false);
     }
+  };
+
+  /**
+   * 從集合移除一張圖片。若該圖為本次 session 剛上傳、尚未存檔者，立即刪 Cloudinary
+   * 並移出追蹤，避免存檔前移除造成孤兒；既有（DB）圖則於儲存時由後端差集清理。
+   */
+  const removeImage = async (url: string) => {
+    if (modalBusy) return;
+    setImageUrls((prev) => prev.filter((u) => u !== url));
+    if (uploadedImageUrlsRef.current.includes(url)) {
+      uploadedImageUrlsRef.current = uploadedImageUrlsRef.current.filter(
+        (u) => u !== url,
+      );
+      try {
+        await deleteUploadedImage(url);
+      } catch {
+        // 盡力刪除；失敗不阻擋 UI（孤兒風險極低）。
+      }
+    }
+  };
+
+  const handleImageDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    setImageUrls((prev) => {
+      const oldIndex = prev.indexOf(active.id as string);
+      const newIndex = prev.indexOf(over.id as string);
+      if (oldIndex < 0 || newIndex < 0) return prev;
+      return arrayMove(prev, oldIndex, newIndex);
+    });
   };
 
   const handleSave = async () => {
@@ -285,9 +408,9 @@ export default function ProductsPage() {
       promoConfig,
     };
 
-    if (!currentImageUrl) {
-      setImageError("請上傳商品圖片");
-      messageApi.error("請上傳商品圖片");
+    if (imageUrls.length === 0) {
+      setImageError("請至少上傳一張商品圖片");
+      messageApi.error("請至少上傳一張商品圖片");
       return;
     }
 
@@ -296,8 +419,7 @@ export default function ProductsPage() {
       if (editing) {
         await putJson(`/api/products/${editing.id}`, {
           price: priceNum,
-          imageUrl: currentImageUrl,
-          oldImageUrl: editing.imageUrl,
+          imageUrls,
           categoryId: values.categoryId,
           spec: values.spec,
           description: values.description,
@@ -308,7 +430,7 @@ export default function ProductsPage() {
         await postJson("/api/products", {
           name: values.name,
           price: priceNum,
-          imageUrl: currentImageUrl,
+          imageUrls,
           categoryId: values.categoryId,
           spec: values.spec,
           description: values.description,
@@ -710,59 +832,46 @@ export default function ProductsPage() {
             label="商品圖片"
             required
             validateStatus={imageError ? "error" : undefined}
-            help={imageError || undefined}
+            help={
+              imageError ||
+              `第一張為封面，可拖拉調整順序（最多 ${MAX_PRODUCT_IMAGES} 張）`
+            }
           >
-            <Upload
-              listType="picture-card"
-              showUploadList={false}
-              customRequest={handleUpload}
-              accept="image/*"
-              disabled={modalBusy}
+            <DndContext
+              sensors={sensors}
+              onDragEnd={handleImageDragEnd}
+              modifiers={[restrictToParentElement]}
             >
-              {currentImageUrl ? (
-                <div
-                  style={{
-                    position: "relative",
-                    width: "100%",
-                    height: "100%",
-                  }}
-                >
-                  <Image
-                    src={currentImageUrl}
-                    alt="product"
-                    preview={false}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
-                      borderRadius: 4,
-                    }}
-                  />
-                  <CloseCircleFilled
-                    style={{
-                      position: "absolute",
-                      top: -8,
-                      right: -8,
-                      fontSize: 18,
-                      color: "#ff4d4f",
-                      background: "#fff",
-                      borderRadius: "50%",
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (uploading) return;
-                      setCurrentImageUrl("");
-                      setImageError("請上傳商品圖片");
-                    }}
-                  />
+              <SortableContext items={imageUrls} strategy={rectSortingStrategy}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                  {imageUrls.map((url, index) => (
+                    <SortableThumb
+                      key={url}
+                      url={url}
+                      index={index}
+                      disabled={modalBusy}
+                      onRemove={() => removeImage(url)}
+                    />
+                  ))}
+                  {imageUrls.length < MAX_PRODUCT_IMAGES && (
+                    <Upload
+                      listType="picture-card"
+                      showUploadList={false}
+                      customRequest={handleUpload}
+                      accept="image/*"
+                      disabled={modalBusy}
+                    >
+                      <div>
+                        {uploading ? <Spin size="small" /> : <PlusOutlined />}
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
+                          上傳圖片
+                        </div>
+                      </div>
+                    </Upload>
+                  )}
                 </div>
-              ) : (
-                <div>
-                  {uploading ? <Spin size="small" /> : <PlusOutlined />}
-                  <div style={{ marginTop: 8, fontSize: 12 }}>上傳圖片</div>
-                </div>
-              )}
-            </Upload>
+              </SortableContext>
+            </DndContext>
           </Form.Item>
         </Form>
       </Modal>
