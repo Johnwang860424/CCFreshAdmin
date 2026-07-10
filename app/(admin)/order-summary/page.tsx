@@ -18,6 +18,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import type { RouteOrderMatrix } from "@/app/lib/orders";
 import type { RouteRow } from "@/app/lib/routes";
+import type { ProductRow } from "@/app/lib/products";
 import { fetchJson, downloadBlob } from "@/app/lib/api-client";
 import { buildCsv } from "@/app/lib/csv";
 import { PageHeader } from "@/app/components/page-header";
@@ -91,26 +92,45 @@ export default function OrderSummaryPage() {
     return routes.find((r) => String(r.id) === route)?.name ?? "路線";
   }, [route, routes]);
 
-  const handleDownloadCsv = useCallback(() => {
+  const handleDownloadCsv = useCallback(async () => {
     if (!matrix || matrix.rows.length === 0) return;
 
-    const header = ["取貨點", ...matrix.products];
-    const bodyRows = matrix.rows.map((row) => [
-      row.label,
-      ...matrix.products.map((product) => row.quantities[product] ?? 0),
-    ]);
-    const totalRow = [
-      "商品總量",
-      ...matrix.products.map((product) => matrix.productTotals[product] ?? 0),
-    ];
+    try {
+      const allProducts = await fetchJson<ProductRow[]>("/api/products");
 
-    const csv = buildCsv([header, ...bodyRows, totalRow]);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const dateLabel = range
-      ? `${range[0].format("YYYYMMDD")}-${range[1].format("YYYYMMDD")}`
-      : "全部日期";
-    downloadBlob(blob, `訂單統計_${routeLabel}_${dateLabel}.csv`);
-  }, [matrix, range, routeLabel]);
+      const header = [
+        "產品名稱",
+        "訂單數量",
+        "出貨數量",
+        "剩餘數量",
+        "售出數量",
+        "單價",
+        "小計",
+      ];
+
+      const bodyRows = allProducts.map((product, idx) => {
+        const rowIndex = idx + 2;
+        return [
+          product.name,
+          matrix.productTotals[product.name] ?? 0,
+          "",
+          "",
+          `=C${rowIndex}-D${rowIndex}`,
+          product.price,
+          `=E${rowIndex}*F${rowIndex}`,
+        ];
+      });
+
+      const csv = buildCsv([header, ...bodyRows]);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const dateLabel = range
+        ? `${range[0].format("YYYYMMDD")}-${range[1].format("YYYYMMDD")}`
+        : "全部日期";
+      downloadBlob(blob, `訂單統計_${routeLabel}_${dateLabel}.csv`);
+    } catch {
+      messageApi.error("讀取商品清單失敗，無法下載 CSV");
+    }
+  }, [matrix, range, routeLabel, messageApi]);
 
   useEffect(() => {
     fetchRoutes();
