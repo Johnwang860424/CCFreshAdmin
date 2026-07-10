@@ -54,6 +54,7 @@ import {
   downloadBlob,
 } from "@/app/lib/api-client";
 import { safeFilename, taipeiDateStamp } from "@/app/lib/csv";
+import { formatPickupCode } from "@/app/lib/pickup-code";
 import { PageHeader } from "@/app/components/page-header";
 
 const { Text } = Typography;
@@ -389,8 +390,10 @@ export default function OrdersPage() {
       (order.phone ?? "").includes(search) ||
       (order.pickupSpotLabel ?? "").includes(search) ||
       (order.shippingAddress ?? "").includes(search) ||
-      (order.pickupNumber != null &&
-        String(order.pickupNumber).includes(search)) ||
+      (formatPickupCode(order.pickupSpotId, order.pickupNumber)
+        ?.toLowerCase()
+        .includes(search.toLowerCase()) ??
+        false) ||
       String(order.id).includes(search),
   );
 
@@ -525,14 +528,16 @@ export default function OrdersPage() {
       title: "取貨號",
       key: "pickupNumber",
       width: 90,
-      render: (_: unknown, order: Order) =>
-        order.pickupNumber == null ? (
+      render: (_: unknown, order: Order) => {
+        const code = formatPickupCode(order.pickupSpotId, order.pickupNumber);
+        return code == null ? (
           "-"
         ) : (
           <Tag color="geekblue" style={{ fontSize: 16, fontWeight: 700 }}>
-            {order.pickupNumber}
+            {code}
           </Tag>
-        ),
+        );
+      },
     },
     {
       title: "客戶",

@@ -35,7 +35,10 @@ export interface OrderRow {
   routeId: number | null;
   /** 所屬路線名稱；宅配、未分路線或取貨點已刪除為 null */
   routeName: string | null;
-  /** 現場取貨號碼牌（每取貨點各自遞增；宅配為 null） */
+  /**
+   * 現場取貨號碼牌的數字部分（每取貨點各自遞增；宅配走自己的序列）。
+   * 顯示時由 app/lib/pickup-code.ts 組成「站點代碼＋流水號」（如 A5）；DB 只存整數。
+   */
   pickupNumber: number | null;
   shippingAddress: string | null;
   note: string | null;
@@ -454,7 +457,7 @@ interface ProductSnapshot {
 /**
  * 後台手動建立一筆訂單（含明細）。
  * - 明細的單價/促銷/小計一律以商品「目前」資料快照計算（calcLineSubtotal），不採信前端金額。
- * - 自取訂單依既有約定指派 pickup_number（每取貨點各自遞增），撞唯一鍵時重試；宅配為 NULL。
+ * - 依既有約定指派 pickup_number（自取每取貨點各自遞增；宅配於 pickup_spot_id IS NULL 作用域遞增），撞唯一鍵時重試。
  * - 以單一 CTE SQL 語句原子寫入 orders 與 order_items（Neon HTTP 無互動式交易）。
  * 回傳新訂單 id。
  */
