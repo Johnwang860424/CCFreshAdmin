@@ -211,12 +211,19 @@ export default function OrdersPage() {
       ]);
       setProducts(prods);
       setPickupSpots(spots);
+      // 新增訂單時固定列出所有商品，預設皆不選購（數量為 0）。
+      form.setFieldsValue({
+        items: prods.map((product) => ({
+          productId: product.id,
+          quantity: 0,
+        })),
+      });
     } catch {
       messageApi.error("讀取商品或取貨點清單失敗");
     } finally {
       setCreateDataLoading(false);
     }
-  }, [messageApi]);
+  }, [form, messageApi]);
 
   const closeCreateModal = useCallback(() => {
     setCreateOpen(false);
@@ -306,6 +313,11 @@ export default function OrdersPage() {
     }
     setCreating(true);
     try {
+      const items = values.items.filter((item) => Number(item.quantity) > 0);
+      if (items.length === 0) {
+        messageApi.error("請至少選擇一項商品並填入數量");
+        return;
+      }
       await postJson("/api/orders", {
         customerName: values.customerName,
         phone: values.phone,
@@ -316,7 +328,7 @@ export default function OrdersPage() {
         shippingAddress:
           values.deliveryMethod === "delivery" ? values.shippingAddress : null,
         note: values.note,
-        items: values.items.map((i) => ({
+        items: items.map((i) => ({
           productId: i.productId,
           quantity: i.quantity,
         })),
@@ -975,7 +987,7 @@ export default function OrdersPage() {
             initialValues={{
               tag: "網站",
               deliveryMethod: "pickup",
-              items: [{ quantity: 1 }],
+              items: [],
             }}
           >
             <Form.Item
@@ -1053,71 +1065,44 @@ export default function OrdersPage() {
               </>
             )}
 
-            <Form.List name="items">
-              {(fields, { add, remove }) => (
-                <div>
-                  <div style={{ marginBottom: 8, fontWeight: 500 }}>商品明細</div>
-                  {fields.map((field) => (
-                    <div
-                      key={field.key}
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: "8px",
-                        alignItems: "flex-start",
-                        marginBottom: 12,
-                      }}
-                    >
-                      <Form.Item
-                        name={[field.name, "productId"]}
-                        rules={[{ required: true, message: "請選擇商品" }]}
-                        style={{ marginBottom: 0, flex: "1 1 280px" }}
-                      >
-                        <Select
-                          placeholder="選擇商品"
-                          showSearch={{
-                            optionFilterProp: 'label'
-                          }}
-                          style={{ width: "100%" }}
-                          options={products.map((p) => ({
-                            label: `${p.name}（$${p.price}${p.promoSummary ? ` · ${p.promoSummary}` : ""
-                              }）`,
-                            value: p.id,
-                          }))}
-                          notFoundContent="尚無商品"
-                        />
-                      </Form.Item>
-                      <div style={{ display: "flex", gap: "8px", flex: "0 0 auto", alignItems: "center" }}>
-                        <Form.Item
-                          name={[field.name, "quantity"]}
-                          rules={[{ required: true, message: "請輸入數量" }]}
-                          style={{ marginBottom: 0 }}
-                        >
-                          <InputNumber min={1} precision={0} placeholder="數量" style={{ width: 80 }} />
-                        </Form.Item>
-                        {fields.length > 1 && (
-                          <Button
-                            type="text"
-                            danger
-                            icon={<DeleteOutlined />}
-                            onClick={() => remove(field.name)}
-                            style={{ height: 32 }}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  <Button
-                    type="dashed"
-                    onClick={() => add({ quantity: 1 })}
-                    icon={<PlusOutlined />}
-                    block
+            <div>
+              <div style={{ marginBottom: 8, fontWeight: 500 }}>商品明細</div>
+              {products.length === 0 && !createDataLoading ? (
+                <Empty description="尚無商品" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : (
+                products.map((product, index) => (
+                  <div
+                    key={product.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 16,
+                      alignItems: "center",
+                      padding: "8px 0",
+                      borderBottom: "1px solid #f0f0f0",
+                    }}
                   >
-                    新增商品
-                  </Button>
-                </div>
+                    <div>
+                      <div>{product.name}</div>
+                      <Text type="secondary">
+                        ${product.price}
+                        {product.promoSummary ? ` · ${product.promoSummary}` : ""}
+                      </Text>
+                    </div>
+                    <Form.Item name={["items", index, "productId"]} hidden>
+                      <InputNumber />
+                    </Form.Item>
+                    <Form.Item
+                      name={["items", index, "quantity"]}
+                      rules={[{ required: true, message: "請輸入數量" }]}
+                      style={{ marginBottom: 0 }}
+                    >
+                      <InputNumber min={0} precision={0} aria-label={`${product.name} 數量`} style={{ width: 80 }} />
+                    </Form.Item>
+                  </div>
+                ))
               )}
-            </Form.List>
+            </div>
 
             <Form.Item label="備註" name="note" style={{ marginTop: 16 }}>
               <Input.TextArea rows={2} placeholder="選填" />
