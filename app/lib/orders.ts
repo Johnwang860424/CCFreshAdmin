@@ -35,6 +35,8 @@ export interface OrderRow {
   routeId: number | null;
   /** 所屬路線名稱；宅配、未分路線或取貨點已刪除為 null */
   routeName: string | null;
+  /** 所屬站點代碼（JOIN pickup_spots.code 即時取得，管理員可改）；宅配為 null */
+  spotCode: string | null;
   /**
    * 現場取貨號碼牌的數字部分（每取貨點各自遞增；宅配走自己的序列）。
    * 顯示時由 app/lib/pickup-code.ts 組成「站點代碼＋流水號」（如 A5）；DB 只存整數。
@@ -84,6 +86,7 @@ function assembleOrders(
     pickupSpotTownship: (r.pickup_spot_township as string) ?? null,
     routeId: (r.route_id as number) ?? null,
     routeName: (r.route_name as string) ?? null,
+    spotCode: (r.spot_code as string) ?? null,
     pickupNumber: (r.pickup_number as number) ?? null,
     shippingAddress: (r.shipping_address as string) ?? null,
     note: (r.note as string) ?? null,
@@ -106,7 +109,8 @@ export async function getOrders(): Promise<OrderRow[]> {
            ps.city AS pickup_spot_city,
            ps.township AS pickup_spot_township,
            ps.route_id AS route_id,
-           r.name AS route_name
+           r.name AS route_name,
+           ps.code AS spot_code
     FROM orders o
     LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
     LEFT JOIN routes r ON r.id = ps.route_id
@@ -140,7 +144,8 @@ export async function getOrdersByIds(ids: number[]): Promise<OrderRow[]> {
            ps.city AS pickup_spot_city,
            ps.township AS pickup_spot_township,
            ps.route_id AS route_id,
-           r.name AS route_name
+           r.name AS route_name,
+           ps.code AS spot_code
     FROM orders o
     LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
     LEFT JOIN routes r ON r.id = ps.route_id
@@ -187,7 +192,8 @@ export async function getOrdersByRoute(
            ps.city || ' ' || ps.township AS pickup_spot_label,
            ps.township AS pickup_spot_township,
            ps.route_id AS route_id,
-           r.name AS route_name
+           r.name AS route_name,
+           ps.code AS spot_code
     FROM orders o
     JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
     LEFT JOIN routes r ON r.id = ps.route_id
@@ -588,7 +594,8 @@ export async function getOrderById(id: number): Promise<OrderRow | null> {
            END AS pickup_spot_label,
            ps.township AS pickup_spot_township,
            ps.route_id AS route_id,
-           r.name AS route_name
+           r.name AS route_name,
+           ps.code AS spot_code
     FROM orders o
     LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
     LEFT JOIN routes r ON r.id = ps.route_id

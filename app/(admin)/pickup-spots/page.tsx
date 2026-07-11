@@ -57,7 +57,13 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { TAIWAN_LOCATIONS } from "@/app/lib/taiwan-locations";
 import type { PickupSpotRow as PickupSpot } from "@/app/lib/pickup-spots";
-import { fetchJson, postJson, putJson, deleteJson } from "@/app/lib/api-client";
+import {
+  ApiError,
+  fetchJson,
+  postJson,
+  putJson,
+  deleteJson,
+} from "@/app/lib/api-client";
 import { PageHeader } from "@/app/components/page-header";
 
 const { Text } = Typography;
@@ -174,6 +180,7 @@ export default function PickupSpotsPage() {
       form.setFieldsValue({
         city: editing.city,
         township: editing.township,
+        code: editing.code,
       });
     } else {
       form.resetFields();
@@ -197,8 +204,37 @@ export default function PickupSpotsPage() {
     setEditing(null);
   };
 
+  // 儲存（新增/編輯）；confirmCodeChange 僅在改碼確認後重送時為 true。
+  const saveSpot = useCallback(
+    async (
+      values: { city: string; township: string; code: string },
+      confirmCodeChange = false,
+    ) => {
+      if (editing) {
+        // 縣市不可更改；此頁改地點與站點代碼，所屬路線於「路線管理」頁調整（不送 routeId）。
+        await putJson(`/api/pickup-spots/${editing.id}`, {
+          township: values.township,
+          code: values.code,
+          ...(confirmCodeChange ? { confirmCodeChange: true } : {}),
+        });
+        messageApi.success("自取地點已更新");
+      } else {
+        await postJson("/api/pickup-spots", {
+          city: values.city,
+          township: values.township,
+          code: values.code,
+        });
+        messageApi.success("自取地點已新增");
+        setActiveTab(values.city);
+      }
+      closeModal();
+      await fetchData();
+    },
+    [editing, messageApi, fetchData],
+  );
+
   const handleSave = async () => {
-    let values: { city: string; township: string };
+    let values: { city: string; township: string; code: string };
     try {
       values = await form.validateFields();
     } catch {
@@ -206,26 +242,33 @@ export default function PickupSpotsPage() {
     }
     try {
       setSaving(true);
-      if (editing) {
-        // 縣市不可更改；此頁僅改地點，所屬路線於「路線管理」頁調整（不送 routeId）。
-        await putJson(`/api/pickup-spots/${editing.id}`, {
-          township: values.township,
-        });
-        messageApi.success("自取地點已更新");
-      } else {
-        await postJson("/api/pickup-spots", {
-          city: values.city,
-          township: values.township,
-        });
-        messageApi.success("自取地點已新增");
-        setActiveTab(values.city);
-      }
-      closeModal();
-      await fetchData();
+      await saveSpot(values);
     } catch (e) {
-      messageApi.error(
-        e instanceof Error ? e.message : editing ? "更新失敗" : "新增失敗",
-      );
+      // 站點尚有訂單時改碼：後端回 409 requiresConfirmation，開確認視窗後帶 confirmCodeChange 重送。
+      const needsConfirm =
+        e instanceof ApiError &&
+        (e.body as { requiresConfirmation?: boolean } | null)
+          ?.requiresConfirmation === true;
+      if (needsConfirm) {
+        Modal.confirm({
+          title: "修改站點代碼？",
+          content: `${(e as ApiError).message}（例如 ${editing?.code ?? ""}5 將變成 ${values.code}5），確定要修改嗎？`,
+          okText: "確定修改",
+          okButtonProps: { danger: true },
+          cancelText: "取消",
+          onOk: async () => {
+            try {
+              await saveSpot(values, true);
+            } catch (e2) {
+              messageApi.error(e2 instanceof Error ? e2.message : "更新失敗");
+            }
+          },
+        });
+      } else {
+        messageApi.error(
+          e instanceof Error ? e.message : editing ? "更新失敗" : "新增失敗",
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -292,6 +335,13 @@ export default function PickupSpotsPage() {
       ),
     },
     {
+      title: "代碼",
+      dataIndex: "code",
+      key: "code",
+      width: 90,
+      render: (code: string) => <Tag color="geekblue">{code}</Tag>,
+    },
+    {
       title: "所屬路線",
       dataIndex: "routeName",
       key: "routeName",
@@ -343,6 +393,13 @@ export default function PickupSpotsPage() {
       dataIndex: "township",
       key: "township",
       render: (township: string) => <Text>{township}</Text>,
+    },
+    {
+      title: "代碼",
+      dataIndex: "code",
+      key: "code",
+      width: 90,
+      render: (code: string) => <Tag color="geekblue">{code}</Tag>,
     },
     {
       title: "所屬路線",
@@ -503,6 +560,22 @@ export default function PickupSpotsPage() {
             rules={[{ required: true, message: "請輸入地點" }]}
           >
             <Input placeholder="請輸入地點" />
+          </Form.Item>
+
+          <Form.Item
+            name="code"
+            label="站點代碼（取貨號前綴）"
+            normalize={(value: string) => value?.toUpperCase()}
+            rules={[
+              { required: true, message: "請輸入站點代碼" },
+              {
+                pattern: /^[A-Za-z]{1,3}$/,
+                message: "站點代碼須為 1–3 個英文字母",
+              },
+            ]}
+            extra="同一路線內不可重複；取貨號以「代碼＋流水號」顯示（如 A5）"
+          >
+            <Input placeholder="A" maxLength={3} style={{ width: 120 }} />
           </Form.Item>
         </Form>
       </Modal>

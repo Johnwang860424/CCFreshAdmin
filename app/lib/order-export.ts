@@ -20,7 +20,7 @@ const EXPORT_HEADER = [
 function orderToRow(order: OrderRow): (string | number)[] {
   return [
     // 取貨號：自取為「站點代碼＋流水號」（如 A5），宅配為純數字，與訂單管理頁顯示一致
-    formatPickupCode(order.pickupSpotId, order.pickupNumber) ?? "",
+    formatPickupCode(order.spotCode, order.pickupNumber) ?? "",
     order.customerName,
     // 取貨地點：自取帶入「鄉鎮」（縣市已由分頁區分），宅配帶入收件地址
     order.deliveryMethod === "delivery"

@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
-import { getPickupSpots, addPickupSpot } from "@/app/lib/pickup-spots";
+import {
+  getPickupSpots,
+  addPickupSpot,
+  PickupSpotDuplicateError,
+  SpotCodeDuplicateError,
+} from "@/app/lib/pickup-spots";
 import { jsonHandler } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
-import { parseRouteId } from "@/app/lib/validation";
+import { parseRouteId, parseSpotCode } from "@/app/lib/validation";
 
 export const GET = jsonHandler(getPickupSpots, "無法讀取自取地點資料");
 
 export const POST = jsonHandler(async (request) => {
   const body = await request.json();
-  const { city, township, routeId } = body as {
+  const { city, township, routeId, code } = body as {
     city: string;
     township: string;
     routeId?: number | null;
+    code?: string;
   };
 
   if (!city || !township) {
@@ -21,7 +27,21 @@ export const POST = jsonHandler(async (request) => {
   const route = parseRouteId(routeId);
   if ("error" in route) return route.error;
 
-  await addPickupSpot(city, township, route.value);
+  const spotCode = parseSpotCode(code);
+  if ("error" in spotCode) return spotCode.error;
+
+  try {
+    await addPickupSpot(city, township, route.value, spotCode.value);
+  } catch (err) {
+    if (
+      err instanceof SpotCodeDuplicateError ||
+      err instanceof PickupSpotDuplicateError
+    ) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
+
   await revalidateCache("pickup-spots");
   return { success: true };
 }, "新增自取地點失敗");

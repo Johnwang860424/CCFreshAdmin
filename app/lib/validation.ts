@@ -42,6 +42,20 @@ export function parseRouteId(
 }
 
 /**
+ * 解析站點代碼（取貨號碼前綴）：trim → 轉大寫 → 須為 1–3 個英文字母，不符回 400。
+ * 一律以大寫回傳（儲存與顯示皆大寫，同路線唯一性因此天然不分大小寫）。
+ */
+export function parseSpotCode(
+  code: unknown,
+): { value: string } | { error: NextResponse } {
+  const raw = typeof code === "string" ? code.trim().toUpperCase() : "";
+  if (!/^[A-Z]{1,3}$/.test(raw)) {
+    return badRequest("站點代碼須為 1–3 個英文字母");
+  }
+  return { value: raw };
+}
+
+/**
  * 驗證商品排序請求：`ids` 須為非空、皆正整數、不重複的陣列。
  * 回傳已驗證的 id 陣列（代表期望的由前到後完整順序）。
  */

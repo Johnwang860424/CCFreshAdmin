@@ -9,20 +9,42 @@ CREATE TABLE products (
   id           SERIAL PRIMARY KEY,
   name         TEXT NOT NULL UNIQUE,
   price        INTEGER NOT NULL,
-  image_url    TEXT NOT NULL,
   category_id  INTEGER REFERENCES categories(id) ON DELETE RESTRICT,
   spec         TEXT,
   description  TEXT,
   promo_type   TEXT,
-  promo_config JSONB
+  promo_config JSONB,
+  sort_order   INTEGER NOT NULL
+);
+
+CREATE INDEX idx_products_sort_order ON products(sort_order);
+
+CREATE TABLE product_images (
+  id          SERIAL PRIMARY KEY,
+  product_id  INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  image_url   TEXT NOT NULL,
+  sort_order  INTEGER NOT NULL
+);
+
+CREATE INDEX idx_product_images_product ON product_images(product_id, sort_order);
+
+CREATE TABLE routes (
+  id    SERIAL PRIMARY KEY,
+  name  TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE pickup_spots (
-  id         SERIAL PRIMARY KEY,
-  city       TEXT NOT NULL,
-  township   TEXT NOT NULL,
-  UNIQUE (city, township)
+  id          SERIAL PRIMARY KEY,
+  city        TEXT NOT NULL,
+  township    TEXT NOT NULL,
+  sort_order  INTEGER NOT NULL,
+  route_id    INTEGER REFERENCES routes(id) ON DELETE RESTRICT,
+  code        TEXT NOT NULL CHECK (code ~ '^[A-Z]{1,3}$'),
+  UNIQUE (city, township),
+  CONSTRAINT pickup_spots_route_id_code_key UNIQUE NULLS NOT DISTINCT (route_id, code)
 );
+
+CREATE INDEX idx_pickup_spots_city_sort ON pickup_spots(city, sort_order);
 
 CREATE TABLE orders (
   id               SERIAL PRIMARY KEY,
@@ -41,7 +63,8 @@ CREATE TABLE orders (
   note             TEXT,
   total            INTEGER NOT NULL DEFAULT 0,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (pickup_spot_id, pickup_number)
+  tag              TEXT NOT NULL DEFAULT '網站',
+  CONSTRAINT orders_pickup_spot_id_pickup_number_key UNIQUE NULLS NOT DISTINCT (pickup_spot_id, pickup_number)
 );
 
 CREATE TABLE order_items (
