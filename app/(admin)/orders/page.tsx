@@ -402,7 +402,7 @@ export default function OrdersPage() {
       (order.phone ?? "").includes(search) ||
       (order.pickupSpotLabel ?? "").includes(search) ||
       (order.shippingAddress ?? "").includes(search) ||
-      (formatPickupCode(order.pickupSpotId, order.pickupNumber)
+      (formatPickupCode(order.spotCode, order.pickupNumber)
         ?.toLowerCase()
         .includes(search.toLowerCase()) ??
         false) ||
@@ -541,7 +541,7 @@ export default function OrdersPage() {
       key: "pickupNumber",
       width: 90,
       render: (_: unknown, order: Order) => {
-        const code = formatPickupCode(order.pickupSpotId, order.pickupNumber);
+        const code = formatPickupCode(order.spotCode, order.pickupNumber);
         return code == null ? (
           "-"
         ) : (
