@@ -263,6 +263,7 @@ export default function RoutesPage() {
       key: "actions",
       width: 120,
       align: "center",
+      fixed: "right",
       render: (_: unknown, record) =>
         record.isVirtual || record.id == null ? null : (
           <Space>
