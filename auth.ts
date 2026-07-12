@@ -6,6 +6,11 @@ const allowedEmails = (process.env.ALLOWED_EMAILS ?? "")
   .map((email) => email.trim().toLowerCase())
   .filter(Boolean);
 
+export function isAllowedEmail(email: string | null | undefined): boolean {
+  if (!email || allowedEmails.length === 0) return false;
+  return allowedEmails.includes(email.trim().toLowerCase());
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   providers: [Google],
@@ -15,18 +20,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     signIn({ profile }) {
       if (!profile?.email || profile.email_verified !== true) return false;
-      if (allowedEmails.length === 0) return false;
-
-      const email = profile?.email?.toLowerCase();
-      return Boolean(email && allowedEmails.includes(email));
+      return isAllowedEmail(profile.email);
     },
     authorized({ auth, request }) {
-      const isLoggedIn = Boolean(auth?.user);
+      const isAuthorized = Boolean(
+        auth?.user && isAllowedEmail(auth.user.email),
+      );
       const { pathname } = request.nextUrl;
 
       if (pathname === "/login") return true;
 
-      return isLoggedIn;
+      return isAuthorized;
     },
   },
 });

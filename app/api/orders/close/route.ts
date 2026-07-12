@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import {
   getOrders,
   getCloseGroups,
@@ -13,15 +12,6 @@ import { safeFilename, taipeiDateStamp } from "@/app/lib/csv";
 interface GroupBody {
   method?: string;
   routeId?: number | null;
-}
-
-/** 分組匯出/出貨屬敏感/變更資料操作：middleware 之外再顯式檢查登入（憲章原則 III）。 */
-async function requireAuth(): Promise<NextResponse | null> {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "未授權" }, { status: 401 });
-  }
-  return null;
 }
 
 /** 取出某一結單分組的訂單：宅配為一組，自取則依「路線」（含未分路線）分組 */
@@ -44,9 +34,6 @@ export const GET = jsonHandler(async () => {
 // 匯出 Excel：僅下載該分組的訂單，不刪除任何資料，可重複匯出（與出貨為兩個獨立動作）。
 // 依「縣市」分成不同工作表（tab），tab 名稱即縣市；宅配、無取貨點者另成一頁。
 export const POST = jsonHandler(async (request) => {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
   const body = (await request.json().catch(() => ({}))) as GroupBody;
   const allOrders = await getOrders();
   const orders = filterGroup(allOrders, body);
@@ -76,9 +63,6 @@ export const POST = jsonHandler(async (request) => {
 
 // 出貨：永久清除該分組的訂單，不下載檔案（與匯出為兩個獨立動作）。
 export const DELETE = jsonHandler(async (request) => {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
   const body = (await request.json().catch(() => ({}))) as GroupBody;
   await deleteOrdersByGroup(body.method ?? "pickup", body.routeId ?? null);
   return { success: true };

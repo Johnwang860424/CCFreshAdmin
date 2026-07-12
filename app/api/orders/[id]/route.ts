@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import {
   updateOrderItems,
   deleteOrder,
@@ -11,21 +10,9 @@ import { parseId, validateUpdateOrderItemsBody } from "@/app/lib/validation";
 
 type Params = { params: Promise<{ id: string }> };
 
-/** 變更資料端點的縱深防禦：middleware 之外再顯式檢查登入（憲章原則 III）。 */
-async function requireAuth(): Promise<NextResponse | null> {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "未授權" }, { status: 401 });
-  }
-  return null;
-}
-
 // 修改訂單品項（新增/移除/改數量）。金額一律後端計算：既有明細保留原始快照、
 // 新增明細取商品現價快照；重算 orders.total。訂單並發消失回 404。
 export const PUT = jsonHandler<Params>(async (request, { params }) => {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
   const { id: idStr } = await params;
   const parsedId = parseId(idStr);
   if ("error" in parsedId) return parsedId.error;
@@ -55,9 +42,6 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
 
 // 刪除單筆訂單（明細由 ON DELETE CASCADE 一併清除）。
 export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
   const { id: idStr } = await params;
   const parsedId = parseId(idStr);
   if ("error" in parsedId) return parsedId.error;

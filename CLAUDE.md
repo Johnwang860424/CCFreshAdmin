@@ -54,7 +54,7 @@ Schema lives in `db/schema.sql` (run once against Neon); incremental changes are
 
 ## API routes & image lifecycle
 
-REST handlers under `app/api/{products,categories,routes,pickup-spots,orders}/` (collection `route.ts` for GET/POST, `[id]/route.ts` for PUT/DELETE; plus sub-routes like `pickup-spots/reorder`, `products/reorder`, `orders/close`, `orders/summary`) and `app/api/upload/` (POST upload, DELETE remove). Note that while these `/api/*` routes (except `/api/auth`) are matched by the proxy middleware and thus auth-guarded globally, mutating or sensitive endpoints should still validate authorization explicitly (`auth()`) as a defense-in-depth practice.
+REST handlers under `app/api/{products,categories,routes,pickup-spots,orders}/` (collection `route.ts` for GET/POST, `[id]/route.ts` for PUT/DELETE; plus sub-routes like `pickup-spots/reorder`, `products/reorder`, `orders/close`, `orders/summary`) and `app/api/upload/` (POST upload, DELETE remove). These `/api/*` routes (except `/api/auth`) are matched by Proxy for an initial auth check. All business endpoints use `jsonHandler`, which independently validates the current session and `ALLOWED_EMAILS` before invoking the handler; keep this shared authorization boundary intact rather than relying solely on Proxy.
 
 Image cleanup is coordinated to avoid orphans (multi-image aware):
 - Product update (`PUT`) reads the product's existing image set, saves the new set, then deletes the **diff** (old − new) from Cloudinary — kept images are never touched.

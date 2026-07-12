@@ -1,14 +1,16 @@
-import { auth } from "@/auth";
+import { auth, isAllowedEmail } from "@/auth";
 import { NextResponse } from "next/server";
 
 export const proxy = auth((request) => {
   const { pathname } = request.nextUrl;
-  const isLoggedIn = Boolean(request.auth?.user);
+  const isAuthorized = Boolean(
+    request.auth?.user && isAllowedEmail(request.auth.user.email),
+  );
 
   // 登入頁永遠放行，避免無限轉址
   if (pathname === "/login") return NextResponse.next();
 
-  if (!isLoggedIn) {
+  if (!isAuthorized) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
