@@ -1,17 +1,17 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.1.2 → 1.2.0
-Bump rationale: Principle V redefined — orders are now mutable (item edit + single delete) until 出貨 clears the group; immutability applies to shipment as the settlement boundary rather than forbidding in-place edits. Snapshot, atomicity, and referential-integrity sub-rules retained/clarified. Enables feature specs/005-order-edit-ship. Materially expanded/redefined principle → MINOR.
+Version change: 1.2.0 → 1.2.1
+Bump rationale: Principle III clarified without changing its security requirement: authorization may be enforced by a shared Route Handler wrapper or the data-access boundary instead of requiring every handler to call `auth()` directly. PATCH.
 
 Modified principles:
-  - V. Order History Is Immutable → V. Orders Are Mutable Until Shipment, Immutable in History
+  - III. Deny-by-Default Authorization (clarified enforcement location)
 
 Added sections: none
 
 Removed sections: none
 
-Notes: CLAUDE.md Data layer paragraph updated in the same change — orders/order_items are editable and deletable by the admin before 出貨 via app/api/orders/[id] (PUT/DELETE), no longer "read/export/clear only".
+Notes: `app/lib/api.ts`, `auth.ts`, `proxy.ts`, and CLAUDE.md updated to keep runtime guidance and implementation aligned. All business API handlers use the shared authorized wrapper; NextAuth endpoints remain exempt.
 -->
 
 # CC 生鮮 (CC Fresh) Admin Constitution
@@ -50,11 +50,13 @@ Authentication and the email allowlist (`ALLOWED_EMAILS`) are deny-by-default: a
 empty or unmatched allowlist MUST result in no access. Protected pages live under
 the `app/(admin)/` route group and are guarded server-side. API routes under
 `app/api/` (except `/api/auth` NextAuth endpoints) are covered by the `proxy.ts`
-matcher; however, any handler that mutates data or exposes sensitive reads MUST
-validate authorization explicitly (`auth()`) rather than solely assuming middleware protection.
+matcher. Proxy is only the initial authentication check: every business API MUST
+also validate the current session and allowlist at the Route Handler, a shared
+handler wrapper, or the data-access boundary. Authorization MUST NOT rely solely
+on Proxy protection.
 
-Rationale: Relying solely on global middleware configurations is error-prone. Explicit
-access control on mutating/sensitive endpoints ensures defense-in-depth and guards
+Rationale: Relying solely on global middleware configurations is error-prone.
+Authorization close to the protected operation ensures defense-in-depth and guards
 against security regressions if matcher exclusions are modified.
 
 ### IV. No Orphaned Images
@@ -149,4 +151,4 @@ wins.
   for agents and contributors lives in `CLAUDE.md` and MUST stay consistent with
   this constitution.
 
-**Version**: 1.2.0 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-07-01
+**Version**: 1.2.1 | **Ratified**: 2026-06-27 | **Last Amended**: 2026-07-12

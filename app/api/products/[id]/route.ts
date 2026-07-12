@@ -1,5 +1,3 @@
-import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import {
   deleteProduct,
   getProductImageUrls,
@@ -17,19 +15,7 @@ import {
 
 type Params = { params: Promise<{ id: string }> };
 
-/** 變更資料端點的縱深防禦：middleware 之外再顯式檢查登入（憲章原則 III）。 */
-async function requireAuth(): Promise<NextResponse | null> {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "未授權" }, { status: 401 });
-  }
-  return null;
-}
-
 export const PUT = jsonHandler<Params>(async (request, { params }) => {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
   const { id: idStr } = await params;
   const parsedId = parseId(idStr);
   if ("error" in parsedId) return parsedId.error;
@@ -67,9 +53,6 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
 }, "更新商品失敗");
 
 export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
   const { id: idStr } = await params;
   const parsed = parseId(idStr);
   if ("error" in parsed) return parsed.error;
