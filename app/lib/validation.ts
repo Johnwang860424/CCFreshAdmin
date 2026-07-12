@@ -157,6 +157,8 @@ export interface ValidatedProduct {
   description: string | null;
   promoType: string | null;
   promoConfig: PromoConfig | null;
+  /** 剩餘可售數量；null＝不限量（不追蹤庫存）。 */
+  stock: number | null;
 }
 
 /**
@@ -168,16 +170,25 @@ export function validateProductBody(
   body: unknown,
   { requireName }: { requireName: boolean },
 ): { value: ValidatedProduct } | { error: NextResponse } {
-  const { name, price, categoryId, spec, description, promoType, promoConfig } =
-    (body ?? {}) as {
-      name?: string;
-      price?: number | string;
-      categoryId?: number | string;
-      spec?: string;
-      description?: string;
-      promoType?: string | null;
-      promoConfig?: unknown;
-    };
+  const {
+    name,
+    price,
+    categoryId,
+    spec,
+    description,
+    promoType,
+    promoConfig,
+    stock,
+  } = (body ?? {}) as {
+    name?: string;
+    price?: number | string;
+    categoryId?: number | string;
+    spec?: string;
+    description?: string;
+    promoType?: string | null;
+    promoConfig?: unknown;
+    stock?: number | string | null;
+  };
 
   const priceNum = Number(price);
   const priceValid =
@@ -213,6 +224,16 @@ export function validateProductBody(
     return badRequest(promo.error);
   }
 
+  // 庫存：缺省/null/空字串 → null（不限量）；否則須為非負整數。
+  let stockVal: number | null = null;
+  if (stock !== undefined && stock !== null && String(stock).trim() !== "") {
+    const stockNum = Number(stock);
+    if (!Number.isInteger(stockNum) || stockNum < 0) {
+      return badRequest("庫存必須為 0 或正整數");
+    }
+    stockVal = stockNum;
+  }
+
   return {
     value: {
       name: nameVal,
@@ -222,6 +243,7 @@ export function validateProductBody(
       description: description?.trim() || null,
       promoType: promo.promoType,
       promoConfig: promo.promoConfig,
+      stock: stockVal,
     },
   };
 }

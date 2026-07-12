@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/auth";
 import {
   getOrdersByRoute,
   getOrderRoutes,
@@ -8,6 +9,7 @@ import {
   OrderInputError,
 } from "@/app/lib/orders";
 import { jsonHandler } from "@/app/lib/api";
+import { revalidateCache } from "@/app/lib/revalidate";
 import { validateCreateOrderBody } from "@/app/lib/validation";
 
 // 訂單查詢：
@@ -40,12 +42,20 @@ export const GET = jsonHandler(async (request) => {
 }, "無法讀取訂單資料");
 
 export const POST = jsonHandler(async (request) => {
+  // 變更資料端點的縱深防禦：middleware 之外再顯式檢查登入（憲章原則 III）。
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "未授權" }, { status: 401 });
+  }
+
   const body = await request.json();
   const parsed = validateCreateOrderBody(body);
   if ("error" in parsed) return parsed.error;
 
   try {
     const id = await createOrder(parsed.value);
+    // 訂單成立已扣減庫存：革除商品快取，讓商品列表/訂單商品選單顯示最新剩餘量。
+    await revalidateCache("products");
     const order = await getOrderById(id);
     return {
       success: true,

@@ -458,6 +458,47 @@ interface ProductSnapshot {
   price: number;
   promo_type: string | null;
   promo_config: PromoConfig | null;
+  /** 剩餘可售數量；NULL＝不限量（不追蹤庫存，不檢查不扣減）。 */
+  stock: number | null;
+}
+
+/**
+ * 對照「每商品需求量」與目前剩餘庫存，組「庫存不足」錯誤；全部足夠回 null。
+ * 訊息格式為 SC-003 契約：「商品名」庫存不足（剩餘 N），多筆以「；」併列。
+ */
+function stockErrorFromRows(
+  rows: { id: number; name: string; stock: number | null }[],
+  wantedByProductId: Map<number, number>,
+): OrderInputError | null {
+  const parts = rows
+    .filter(
+      (r) => r.stock !== null && (wantedByProductId.get(r.id) ?? 0) > r.stock,
+    )
+    .map((r) => `「${r.name}」庫存不足（剩餘 ${r.stock}）`);
+  return parts.length > 0 ? new OrderInputError(parts.join("；")) : null;
+}
+
+/**
+ * 23514 競態後援：預檢通過但寫入時庫存被併發搶走。重查目前庫存組同款訊息；
+ * 若重查已無不足（庫存又變動），給通用訊息請使用者重試。
+ */
+async function buildStockInsufficientError(
+  wantedByProductId: Map<number, number>,
+): Promise<OrderInputError> {
+  const ids = [...wantedByProductId.keys()];
+  const rows = (await sql`
+    SELECT id, name, stock FROM products WHERE id = ANY(${ids})
+  `) as { id: number; name: string; stock: number | null }[];
+  return (
+    stockErrorFromRows(rows, wantedByProductId) ??
+    new OrderInputError("部分商品庫存不足，請重新整理後再試")
+  );
+}
+
+/** 是否為庫存非負約束違反（SQLSTATE 23514 + 具名 CHECK products_stock_nonneg）。 */
+function isStockCheckViolation(err: unknown): boolean {
+  const e = err as { code?: string; constraint?: string };
+  return e?.code === "23514" && e?.constraint === "products_stock_nonneg";
 }
 
 /**
@@ -471,7 +512,7 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
   const productIds = input.items.map((i) => i.productId);
 
   const products = (await sql`
-    SELECT id, name, price, promo_type, promo_config
+    SELECT id, name, price, promo_type, promo_config, stock
     FROM products
     WHERE id = ANY(${productIds})
   `) as ProductSnapshot[];
@@ -482,6 +523,15 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
       throw new OrderInputError("部分商品不存在，請重新選擇");
     }
   }
+
+  // 每商品需求量（validateCreateOrderBody 已合併重複商品，一商品恰一列）。
+  // 預檢負責友善訊息（含商品名與剩餘量）；正確性由寫入語句內的原子扣減＋
+  // DB CHECK 最終防線保證（見 insertOnce 的 dec CTE）。
+  const wantedByProductId = new Map(
+    input.items.map((it) => [it.productId, it.quantity]),
+  );
+  const stockError = stockErrorFromRows(products, wantedByProductId);
+  if (stockError) throw stockError;
 
   if (input.deliveryMethod === "pickup") {
     const spot = await sql`
@@ -535,6 +585,18 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
           ${input.note}, ${total}, ${input.tag}
         )
         RETURNING id
+      ),
+      dec AS (
+        -- 與訂單/明細同句原子扣減庫存（每商品一列，驗證層已合併重複商品）。
+        -- 不限量（stock IS NULL）不扣；扣到負值違反 products_stock_nonneg
+        -- CHECK，整句失敗＝零部分效果；併發由 UPDATE 行鎖序列化，永不超賣。
+        UPDATE products p
+        SET stock = p.stock - t.qty
+        FROM unnest(
+          ${productIdArr}::int[],
+          ${quantityArr}::int[]
+        ) AS t(product_id, qty)
+        WHERE p.id = t.product_id AND p.stock IS NOT NULL
       )
       INSERT INTO order_items (
         order_id, product_id, product_name, unit_price, quantity,
@@ -577,6 +639,10 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
     } catch (err) {
       // 23505 = unique_violation：號碼被搶走，重算再試。
       if ((err as { code?: string })?.code === "23505") continue;
+      // 庫存 CHECK 違反＝預檢後被併發搶走：重查剩餘量組友善訊息，不重試。
+      if (isStockCheckViolation(err)) {
+        throw await buildStockInsufficientError(wantedByProductId);
+      }
       throw err;
     }
   }
@@ -619,6 +685,7 @@ interface ExistingItemSnapshot {
   product_id: number | null;
   product_name: string;
   unit_price: number;
+  quantity: number;
   promo_type: string | null;
   promo_config: PromoConfig | null;
 }
@@ -638,9 +705,9 @@ export async function updateOrderItems(
   const orderRows = await sql`SELECT id FROM orders WHERE id = ${id}`;
   if (orderRows.length === 0) return null;
 
-  // 既有明細快照（含 product_id），供帶 id 的保留列重新寫入。
+  // 既有明細快照（含 product_id 供保留列重寫、quantity 供庫存淨差額計算）。
   const existingRows = (await sql`
-    SELECT id, product_id, product_name, unit_price, promo_type, promo_config
+    SELECT id, product_id, product_name, unit_price, quantity, promo_type, promo_config
     FROM order_items
     WHERE order_id = ${id}
   `) as ExistingItemSnapshot[];
@@ -697,6 +764,49 @@ export async function updateOrderItems(
 
   const total = lineItems.reduce((sum, li) => sum + li.subtotal, 0);
 
+  // 庫存淨差額（FR-007）：每商品 delta = 新合計 − 舊合計（正＝需再扣、負＝回補）。
+  // product_id 為 NULL 的明細列（商品已刪除）無庫存可調，自然略過。
+  const oldQtyByProductId = new Map<number, number>();
+  for (const r of existingRows) {
+    if (r.product_id !== null) {
+      oldQtyByProductId.set(
+        r.product_id,
+        (oldQtyByProductId.get(r.product_id) ?? 0) + r.quantity,
+      );
+    }
+  }
+  const newQtyByProductId = new Map<number, number>();
+  for (const li of lineItems) {
+    if (li.productId !== null) {
+      newQtyByProductId.set(
+        li.productId,
+        (newQtyByProductId.get(li.productId) ?? 0) + li.quantity,
+      );
+    }
+  }
+  const deltaByProductId = new Map<number, number>();
+  for (const [pid, qty] of newQtyByProductId) {
+    const delta = qty - (oldQtyByProductId.get(pid) ?? 0);
+    if (delta !== 0) deltaByProductId.set(pid, delta);
+  }
+  for (const [pid, qty] of oldQtyByProductId) {
+    if (!newQtyByProductId.has(pid)) deltaByProductId.set(pid, -qty);
+  }
+
+  // 只就淨增量預檢（友善訊息含商品名與剩餘量）；正確性由寫入語句的 CHECK 最終防線保證。
+  const increasedByProductId = new Map(
+    [...deltaByProductId].filter(([, delta]) => delta > 0),
+  );
+  if (increasedByProductId.size > 0) {
+    const stockRows = (await sql`
+      SELECT id, name, stock
+      FROM products
+      WHERE id = ANY(${[...increasedByProductId.keys()]})
+    `) as { id: number; name: string; stock: number | null }[];
+    const stockError = stockErrorFromRows(stockRows, increasedByProductId);
+    if (stockError) throw stockError;
+  }
+
   // unnest 用的平行陣列（promo_config 以 text[] 傳入，於 SELECT 時逐筆轉 jsonb）。
   const productIdArr = lineItems.map((li) => li.productId);
   const productNameArr = lineItems.map((li) => li.productName);
@@ -707,41 +817,94 @@ export async function updateOrderItems(
     li.promoConfig === null ? null : JSON.stringify(li.promoConfig),
   );
   const subtotalArr = lineItems.map((li) => li.subtotal);
+  const deltaProductIdArr = [...deltaByProductId.keys()];
+  const deltaArr = [...deltaByProductId.values()];
 
-  // 單一語句原子替換：del/ins 為資料變更 CTE（即使未被主查詢參照仍會執行），
+  // 單一語句原子替換：del/ins/adj 為資料變更 CTE（即使未被主查詢參照仍會執行），
   // 主查詢 UPDATE orders 回傳 id；訂單並發消失時回空列。
-  const rows = await sql`
-    WITH del AS (
-      DELETE FROM order_items WHERE order_id = ${id}
-    ),
-    ins AS (
-      INSERT INTO order_items (
-        order_id, product_id, product_name, unit_price, quantity,
-        promo_type, promo_config, subtotal
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await sql`
+      WITH del AS (
+        DELETE FROM order_items WHERE order_id = ${id}
+      ),
+      ins AS (
+        INSERT INTO order_items (
+          order_id, product_id, product_name, unit_price, quantity,
+          promo_type, promo_config, subtotal
+        )
+        SELECT ${id}, t.product_id, t.product_name, t.unit_price, t.quantity,
+               t.promo_type, t.promo_config::jsonb, t.subtotal
+        FROM unnest(
+          ${productIdArr}::int[],
+          ${productNameArr}::text[],
+          ${unitPriceArr}::int[],
+          ${quantityArr}::int[],
+          ${promoTypeArr}::text[],
+          ${promoConfigArr}::text[],
+          ${subtotalArr}::int[]
+        ) AS t(product_id, product_name, unit_price, quantity,
+               promo_type, promo_config, subtotal)
+      ),
+      adj AS (
+        -- 庫存淨差額同句原子調整（正＝扣、負＝補；不限量不動）。扣到負值違反
+        -- products_stock_nonneg CHECK，整次編輯失敗＝零部分效果。
+        UPDATE products p
+        SET stock = p.stock - t.delta
+        FROM unnest(
+          ${deltaProductIdArr}::int[],
+          ${deltaArr}::int[]
+        ) AS t(product_id, delta)
+        WHERE p.id = t.product_id AND p.stock IS NOT NULL
       )
-      SELECT ${id}, t.product_id, t.product_name, t.unit_price, t.quantity,
-             t.promo_type, t.promo_config::jsonb, t.subtotal
-      FROM unnest(
-        ${productIdArr}::int[],
-        ${productNameArr}::text[],
-        ${unitPriceArr}::int[],
-        ${quantityArr}::int[],
-        ${promoTypeArr}::text[],
-        ${promoConfigArr}::text[],
-        ${subtotalArr}::int[]
-      ) AS t(product_id, product_name, unit_price, quantity,
-             promo_type, promo_config, subtotal)
-    )
-    UPDATE orders SET total = ${total} WHERE id = ${id} RETURNING id
-  `;
+      UPDATE orders SET total = ${total} WHERE id = ${id} RETURNING id
+    `;
+  } catch (err) {
+    // 庫存被併發搶走（預檢後）：重查剩餘量組友善訊息。
+    if (isStockCheckViolation(err)) {
+      throw await buildStockInsufficientError(increasedByProductId);
+    }
+    // 訂單在讀取後被併發刪除/出貨：ins 的 order_id FK 違反，視同訂單不存在（回 404）。
+    const e = err as { code?: string; constraint?: string };
+    if (e?.code === "23503" && e?.constraint === "order_items_order_id_fkey") {
+      return null;
+    }
+    throw err;
+  }
   if (rows.length === 0) return null;
 
   return getOrderById(id);
 }
 
-/** 刪除單筆訂單（order_items 由 ON DELETE CASCADE 自動清除）；回傳是否確有刪到。 */
+/**
+ * 刪除單筆訂單（order_items 由 ON DELETE CASCADE 自動清除）並回補追蹤庫存
+ * 品項的剩餘量；回傳是否確有刪到。
+ * 單一 CTE 語句原子：WITH 各部分讀同一 snapshot，qty 讀到的是 CASCADE 清除前
+ * 的 order_items，回補量因此正確（SC-004）。已刪商品（product_id NULL）與
+ * 不限量商品（stock IS NULL）自然略過。
+ * 注意：出貨路徑（deleteOrdersByIds／deleteOrdersByGroup）刻意不回補——
+ * 出貨＝商品實際售出（憲章原則 V 的結算邊界）。
+ */
 export async function deleteOrder(id: number): Promise<boolean> {
-  const rows = await sql`DELETE FROM orders WHERE id = ${id} RETURNING id`;
+  const rows = await sql`
+    WITH del AS (
+      DELETE FROM orders WHERE id = ${id} RETURNING id
+    ),
+    qty AS (
+      SELECT oi.product_id, SUM(oi.quantity)::int AS q
+      FROM order_items oi
+      JOIN del ON del.id = oi.order_id
+      WHERE oi.product_id IS NOT NULL
+      GROUP BY oi.product_id
+    ),
+    restock AS (
+      UPDATE products p
+      SET stock = p.stock + qty.q
+      FROM qty
+      WHERE p.id = qty.product_id AND p.stock IS NOT NULL
+    )
+    SELECT id FROM del
+  `;
   return rows.length > 0;
 }
 

@@ -358,6 +358,7 @@ export default function PickupSpotsPage() {
       key: "actions",
       width: 120,
       align: "center",
+      fixed: "right",
       render: (_: unknown, record: PickupSpot) => (
         <Space>
           <Button

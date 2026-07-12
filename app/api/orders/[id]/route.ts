@@ -6,6 +6,7 @@ import {
   OrderInputError,
 } from "@/app/lib/orders";
 import { jsonHandler } from "@/app/lib/api";
+import { revalidateCache } from "@/app/lib/revalidate";
 import { parseId, validateUpdateOrderItemsBody } from "@/app/lib/validation";
 
 type Params = { params: Promise<{ id: string }> };
@@ -41,6 +42,8 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
         { status: 404 },
       );
     }
+    // 品項淨差額已同步扣/補庫存：革除商品快取，讓列表/選單顯示最新剩餘量。
+    await revalidateCache("products");
     return order;
   } catch (err) {
     if (err instanceof OrderInputError) {
@@ -66,5 +69,7 @@ export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
       { status: 404 },
     );
   }
+  // 刪單已回補庫存：革除商品快取，讓列表/選單顯示最新剩餘量。
+  await revalidateCache("products");
   return { success: true };
 }, "刪除訂單失敗");

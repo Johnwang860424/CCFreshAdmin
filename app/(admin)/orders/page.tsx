@@ -236,7 +236,8 @@ export default function OrdersPage() {
     form.resetFields();
   }, [form]);
 
-  // 開啟修改視窗：帶入該訂單既有明細（保留 order_items.id），並確保已載入商品清單供新增列挑選。
+  // 開啟修改視窗：帶入該訂單既有明細（保留 order_items.id），並重新載入商品清單
+  // 供新增列挑選——每次開窗都重抓，確保剩餘庫存/售完標示為最新（庫存隨訂單異動）。
   const openEditModal = useCallback(
     async (order: Order) => {
       setEditOrder(order);
@@ -248,18 +249,16 @@ export default function OrdersPage() {
         })),
       });
       setEditOpen(true);
-      if (products.length === 0) {
-        setEditDataLoading(true);
-        try {
-          setProducts(await fetchJson<ProductRow[]>("/api/products"));
-        } catch {
-          messageApi.error("讀取商品清單失敗");
-        } finally {
-          setEditDataLoading(false);
-        }
+      setEditDataLoading(true);
+      try {
+        setProducts(await fetchJson<ProductRow[]>("/api/products"));
+      } catch {
+        messageApi.error("讀取商品清單失敗");
+      } finally {
+        setEditDataLoading(false);
       }
     },
-    [editForm, products.length, messageApi],
+    [editForm, messageApi],
   );
 
   const closeEditModal = useCallback(() => {
@@ -1097,10 +1096,20 @@ export default function OrdersPage() {
                     }}
                   >
                     <div>
-                      <div>{product.name}</div>
+                      <div>
+                        {product.name}
+                        {product.stock === 0 && (
+                          <Tag color="red" style={{ marginLeft: 8 }}>
+                            售完
+                          </Tag>
+                        )}
+                      </div>
                       <Text type="secondary">
                         ${product.price}
                         {product.promoSummary ? ` · ${product.promoSummary}` : ""}
+                        {product.stock !== null && product.stock > 0
+                          ? ` · 剩餘 ${product.stock}`
+                          : ""}
                       </Text>
                     </div>
                     <Form.Item name={["items", index, "productId"]} hidden>
@@ -1111,7 +1120,13 @@ export default function OrdersPage() {
                       rules={[{ required: true, message: "請輸入數量" }]}
                       style={{ marginBottom: 0 }}
                     >
-                      <InputNumber min={0} precision={0} aria-label={`${product.name} 數量`} style={{ width: 80 }} />
+                      <InputNumber
+                        min={0}
+                        precision={0}
+                        disabled={product.stock === 0}
+                        aria-label={`${product.name} 數量`}
+                        style={{ width: 80 }}
+                      />
                     </Form.Item>
                   </div>
                 ))
@@ -1208,8 +1223,12 @@ export default function OrdersPage() {
                               style={{ width: "100%" }}
                               options={products.map((p) => ({
                                 label: `${p.name}（$${p.price}${p.promoSummary ? ` · ${p.promoSummary}` : ""
+                                  }${p.stock !== null
+                                    ? ` · ${p.stock === 0 ? "售完" : `剩餘 ${p.stock}`}`
+                                    : ""
                                   }）`,
                                 value: p.id,
+                                disabled: p.stock === 0,
                               }))}
                               notFoundContent="尚無商品"
                             />

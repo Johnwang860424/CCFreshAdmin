@@ -14,6 +14,8 @@ interface ProductDbRow {
   promo_type: string | null;
   promo_config: PromoConfig | null;
   sort_order: number;
+  /** 剩餘可售數量；NULL＝不限量（不追蹤庫存）。 */
+  stock: number | null;
   images: string[];
 }
 
@@ -32,6 +34,8 @@ export interface ProductRow {
   promoConfig: PromoConfig | null;
   promoSummary: string | null;
   sortOrder: number;
+  /** 剩餘可售數量；null＝不限量（不追蹤庫存）、0＝售完。訂單成立時原子扣減。 */
+  stock: number | null;
   /** 依 sort_order 排好的完整圖片 URL 陣列（1–8 張）；images[0] 即封面（= imageUrl）。 */
   images: string[];
 }
@@ -57,6 +61,7 @@ function toProductRow(row: ProductDbRow): ProductRow {
     promoConfig,
     promoSummary,
     sortOrder: row.sort_order,
+    stock: row.stock ?? null,
     images,
   };
 }
@@ -75,6 +80,7 @@ export const getProducts = unstable_cache(
         p.promo_type,
         p.promo_config,
         p.sort_order,
+        p.stock,
         COALESCE(
           (
             SELECT array_agg(pi.image_url ORDER BY pi.sort_order)
@@ -102,16 +108,18 @@ export async function addProduct(
   description: string | null,
   promoType: string | null,
   promoConfig: PromoConfig | null,
+  stock: number | null,
 ) {
   const configJson = promoConfig === null ? null : JSON.stringify(promoConfig);
   // 單一原子語句（CTE）：插入 products（sort_order 取 MAX+1 排在最後、回傳新 id），
   // 再依序插入其 product_images（unnest WITH ORDINALITY 給 sort_order 1..n）。封面即 sort_order=1。
   await sql`
     WITH new_product AS (
-      INSERT INTO products (name, price, category_id, spec, description, promo_type, promo_config, sort_order)
+      INSERT INTO products (name, price, category_id, spec, description, promo_type, promo_config, sort_order, stock)
       VALUES (
         ${name}, ${price}, ${categoryId}, ${spec}, ${description}, ${promoType}, ${configJson}::jsonb,
-        (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM products)
+        (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM products),
+        ${stock}
       )
       RETURNING id
     )
@@ -168,6 +176,7 @@ export async function updateProductDetails(
   description: string | null,
   promoType: string | null,
   promoConfig: PromoConfig | null,
+  stock: number | null,
 ) {
   const configJson = promoConfig === null ? null : JSON.stringify(promoConfig);
   await sql`
@@ -177,7 +186,8 @@ export async function updateProductDetails(
         spec = ${spec},
         description = ${description},
         promo_type = ${promoType},
-        promo_config = ${configJson}::jsonb
+        promo_config = ${configJson}::jsonb,
+        stock = ${stock}
     WHERE id = ${id}
   `;
 }
