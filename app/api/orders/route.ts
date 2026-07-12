@@ -4,6 +4,7 @@ import {
   getOrderRoutes,
   getDeliveryOrders,
   createOrder,
+  getOrderById,
   OrderInputError,
 } from "@/app/lib/orders";
 import { jsonHandler } from "@/app/lib/api";
@@ -45,7 +46,13 @@ export const POST = jsonHandler(async (request) => {
 
   try {
     const id = await createOrder(parsed.value);
-    return { success: true, id };
+    const order = await getOrderById(id);
+    return {
+      success: true,
+      id,
+      pickupNumber: order?.pickupNumber ?? null,
+      spotCode: order?.spotCode ?? null,
+    };
   } catch (err) {
     if (err instanceof OrderInputError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
