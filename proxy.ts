@@ -19,6 +19,7 @@ export const proxy = auth((request) => {
 });
 
 export const config = {
-  // 其餘路由（含其他 /api/*）皆納入登入檢查
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // 其餘路由（含其他 /api/*）皆納入登入檢查。
+  // api/revalidate 例外：前台下單後回敲的快取失效 endpoint，自帶 Bearer token 授權。
+  matcher: ["/((?!api/auth|api/revalidate|_next/static|_next/image|favicon.ico).*)"],
 };
