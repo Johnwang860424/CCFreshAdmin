@@ -18,6 +18,7 @@ import {
   Button,
   Space,
   Input,
+  InputNumber,
   Select,
   Tag,
   Modal,
@@ -276,6 +277,7 @@ export default function ProductsPage() {
       form.setFieldsValue({
         name: editing.name,
         price: editing.price,
+        stock: editing.stock ?? undefined,
         categoryId: editing.categoryId ?? undefined,
         spec: editing.spec ?? undefined,
         description: editing.description ?? undefined,
@@ -380,6 +382,7 @@ export default function ProductsPage() {
     let values: {
       name: string;
       price: string;
+      stock?: number | null;
       categoryId: number;
       spec?: string;
       description?: string;
@@ -419,6 +422,7 @@ export default function ProductsPage() {
       if (editing) {
         await putJson(`/api/products/${editing.id}`, {
           price: priceNum,
+          stock: values.stock ?? null,
           imageUrls,
           categoryId: values.categoryId,
           spec: values.spec,
@@ -430,6 +434,7 @@ export default function ProductsPage() {
         await postJson("/api/products", {
           name: values.name,
           price: priceNum,
+          stock: values.stock ?? null,
           imageUrls,
           categoryId: values.categoryId,
           spec: values.spec,
@@ -588,6 +593,20 @@ export default function ProductsPage() {
       render: (price: number) => <Text>{price}</Text>,
     },
     {
+      title: "庫存",
+      dataIndex: "stock",
+      key: "stock",
+      width: 100,
+      render: (stock: number | null) =>
+        stock === null ? (
+          <Text type="secondary">不限量</Text>
+        ) : stock === 0 ? (
+          <Tag color="red">售完</Tag>
+        ) : (
+          <Text>{stock}</Text>
+        ),
+    },
+    {
       title: "優惠",
       key: "promo",
       width: 160,
@@ -603,6 +622,7 @@ export default function ProductsPage() {
       key: "actions",
       width: 120,
       align: "center",
+      fixed: "right",
       render: (_: unknown, record: Product) => (
         <Space>
           <Button
@@ -775,6 +795,32 @@ export default function ProductsPage() {
             ]}
           >
             <Input placeholder="例：50" />
+          </Form.Item>
+
+          <Form.Item
+            name="stock"
+            label="庫存"
+            rules={[
+              {
+                validator: (_, value) => {
+                  if (value === undefined || value === null || value === "") {
+                    return Promise.resolve();
+                  }
+                  const num = Number(value);
+                  if (!Number.isInteger(num) || num < 0) {
+                    return Promise.reject(new Error("庫存需為 0 或正整數"));
+                  }
+                  return Promise.resolve();
+                },
+              },
+            ]}
+          >
+            <InputNumber
+              min={0}
+              precision={0}
+              placeholder="留空＝不限量"
+              style={{ width: "100%" }}
+            />
           </Form.Item>
 
           <Form.Item name="promoType" label="優惠方式">

@@ -141,6 +141,7 @@ export default function CategoriesPage() {
       key: "actions",
       width: 120,
       align: "center",
+      fixed: "right",
       render: (_: unknown, record: Category) => (
         <Space>
           <Button

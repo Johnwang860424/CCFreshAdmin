@@ -14,7 +14,11 @@ CREATE TABLE products (
   description  TEXT,
   promo_type   TEXT,
   promo_config JSONB,
-  sort_order   INTEGER NOT NULL
+  sort_order   INTEGER NOT NULL,
+  -- 剩餘可售數量（NULL＝不限量／不追蹤；0＝售完）。訂單成立於同一 SQL 語句內
+  -- 原子扣減，具名 CHECK 為防超賣最終防線（應用層依 constraint 名分流 23514）。
+  stock        INTEGER,
+  CONSTRAINT products_stock_nonneg CHECK (stock IS NULL OR stock >= 0)
 );
 
 CREATE INDEX idx_products_sort_order ON products(sort_order);
