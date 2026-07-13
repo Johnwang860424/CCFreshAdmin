@@ -5,6 +5,7 @@ import {
   getDeliveryOrders,
   createOrder,
   getOrderById,
+  countSameNameOrdersInGroup,
   OrderInputError,
 } from "@/app/lib/orders";
 import { jsonHandler } from "@/app/lib/api";
@@ -44,6 +45,22 @@ export const POST = jsonHandler(async (request) => {
   const body = await request.json();
   const parsed = validateCreateOrderBody(body);
   if ("error" in parsed) return parsed.error;
+
+  // 重複下單警示（兩段式）：同路線分組已有同名訂單且未帶確認旗標時，
+  // 先回 409 requiresConfirmation，前端確認後帶 confirmDuplicate: true 重送。
+  if ((body as { confirmDuplicate?: unknown })?.confirmDuplicate !== true) {
+    const duplicateCount = await countSameNameOrdersInGroup(parsed.value);
+    if (duplicateCount > 0) {
+      return NextResponse.json(
+        {
+          requiresConfirmation: true,
+          duplicateCount,
+          error: "系統偵測到您可能已有訂單。請確認是否為重複下單",
+        },
+        { status: 409 },
+      );
+    }
+  }
 
   try {
     const id = await createOrder(parsed.value);

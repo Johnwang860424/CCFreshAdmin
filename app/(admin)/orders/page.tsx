@@ -54,6 +54,7 @@ import {
   putJson,
   deleteJson,
   downloadBlob,
+  ApiError,
 } from "@/app/lib/api-client";
 import { safeFilename, taipeiDateStamp } from "@/app/lib/csv";
 import { formatPickupCode } from "@/app/lib/pickup-code";
@@ -320,15 +321,9 @@ export default function OrdersPage() {
     [messageApi],
   );
 
-  const handleCreate = useCallback(async () => {
-    let values: CreateOrderFormValues;
-    try {
-      values = await form.validateFields();
-    } catch {
-      return; // 驗證失敗，antd 已標示欄位
-    }
-    setCreating(true);
-    try {
+  // 送出新增訂單並執行成功收尾；confirmDuplicate 為重複下單警示確認後的重送旗標。
+  const submitOrder = useCallback(
+    async (values: CreateOrderFormValues, confirmDuplicate?: boolean) => {
       const items = values.items.filter((item) => Number(item.quantity) > 0);
       if (items.length === 0) {
         messageApi.error("請至少選擇一項商品並填入數量");
@@ -353,6 +348,7 @@ export default function OrdersPage() {
           productId: i.productId,
           quantity: i.quantity,
         })),
+        ...(confirmDuplicate ? { confirmDuplicate: true } : {}),
       });
       messageApi.success("訂單已新增");
       setCreateOpen(false);
@@ -363,12 +359,49 @@ export default function OrdersPage() {
       // 重新整理路線清單；若目前正檢視某分組，連同訂單一起刷新。
       fetchRouteOptions();
       if (selected) fetchOrders(selected);
+    },
+    [form, messageApi, fetchRouteOptions, fetchOrders, selected],
+  );
+
+  const handleCreate = useCallback(async () => {
+    let values: CreateOrderFormValues;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return; // 驗證失敗，antd 已標示欄位
+    }
+    setCreating(true);
+    try {
+      await submitOrder(values);
     } catch (err) {
-      messageApi.error(err instanceof Error ? err.message : "新增訂單失敗");
+      // 同路線分組已有同名訂單：後端回 409 requiresConfirmation，
+      // 開確認視窗、確認後帶 confirmDuplicate: true 重送；取消則保留表單。
+      const needsConfirm =
+        err instanceof ApiError &&
+        (err.body as { requiresConfirmation?: boolean } | null)
+          ?.requiresConfirmation === true;
+      if (needsConfirm) {
+        modal.confirm({
+          content: "系統偵測到您可能已有訂單。請確認是否為重複下單",
+          okText: "仍要建立",
+          cancelText: "取消",
+          onOk: async () => {
+            try {
+              await submitOrder(values, true);
+            } catch (err2) {
+              messageApi.error(
+                err2 instanceof Error ? err2.message : "新增訂單失敗",
+              );
+            }
+          },
+        });
+      } else {
+        messageApi.error(err instanceof Error ? err.message : "新增訂單失敗");
+      }
     } finally {
       setCreating(false);
     }
-  }, [form, messageApi, fetchRouteOptions, fetchOrders, selected]);
+  }, [form, submitOrder, modal, messageApi]);
 
   const handleUpdate = useCallback(async () => {
     if (!editOrder) return;
