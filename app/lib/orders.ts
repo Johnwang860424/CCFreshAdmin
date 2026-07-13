@@ -502,6 +502,42 @@ function isStockCheckViolation(err: unknown): boolean {
 }
 
 /**
+ * 計算新訂單所屬路線分組內、客戶姓名相同的既有訂單筆數（重複下單警示用，唯讀）。
+ * - 自取：分組＝所選取貨點的 route_id（NULL＝未分路線，IS NOT DISTINCT FROM 比對）；
+ *   取貨點不存在時 target 為空集合，回 0（錯誤留給 createOrder 的既有驗證回報）。
+ * - 宅配：分組＝全部宅配訂單。
+ * - 姓名以去頭尾空白後完全相符為準（輸入端與資料庫皆已 trim）。
+ */
+export async function countSameNameOrdersInGroup(
+  input: Pick<
+    ValidatedCreateOrder,
+    "customerName" | "deliveryMethod" | "pickupSpotId"
+  >,
+): Promise<number> {
+  if (input.deliveryMethod === "delivery") {
+    const rows = await sql`
+      SELECT COUNT(*)::int AS count
+      FROM orders o
+      WHERE o.delivery_method = 'delivery'
+        AND o.customer_name = ${input.customerName}
+    `;
+    return rows[0].count as number;
+  }
+
+  const rows = await sql`
+    WITH target AS (SELECT route_id FROM pickup_spots WHERE id = ${input.pickupSpotId})
+    SELECT COUNT(*)::int AS count
+    FROM orders o
+    JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
+    CROSS JOIN target t
+    WHERE o.delivery_method = 'pickup'
+      AND ps.route_id IS NOT DISTINCT FROM t.route_id
+      AND o.customer_name = ${input.customerName}
+  `;
+  return (rows[0]?.count as number) ?? 0;
+}
+
+/**
  * 後台手動建立一筆訂單（含明細）。
  * - 明細的單價/促銷/小計一律以商品「目前」資料快照計算（calcLineSubtotal），不採信前端金額。
  * - 依既有約定指派 pickup_number（自取每取貨點各自遞增；宅配於 pickup_spot_id IS NULL 作用域遞增），撞唯一鍵時重試。
