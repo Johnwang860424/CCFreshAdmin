@@ -86,6 +86,15 @@ function tagColor(tag: string): string {
   return "default";
 }
 
+/**
+ * 重複下訂判定鍵：客戶姓名去除頭尾空白後的字串。僅「相同姓名」視為重複——
+ * 電話不比對；姓名為空（理論上必填不會發生）回傳 null，不參與判定。
+ */
+function orderKey(order: Order): string | null {
+  const nameKey = order.customerName.trim();
+  return nameKey !== "" ? nameKey : null;
+}
+
 /** 新增訂單表單的明細列。 */
 interface OrderItemFormValue {
   productId?: number;
@@ -125,6 +134,8 @@ export default function OrdersPage() {
   const [data, setData] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  // 只看重複下訂：切換路線不重設（判定隨 data 重算，正確性不受影響）。
+  const [dupOnly, setDupOnly] = useState(false);
   const { modal, message: messageApi } = App.useApp();
 
   // 新增訂單表單狀態
@@ -409,18 +420,63 @@ export default function OrdersPage() {
     else setData([]);
   }, [selected, fetchOrders]);
 
+  // 重複下訂判定：以目前路線視圖的全部訂單（data）為母體，同一姓名鍵
+  // 出現超過一筆即為重複——與搜尋字串、篩選開關無關，data 重載時隨 memo 重算。
+  const dupKeys = useMemo(() => {
+    const countByKey = new Map<string, number>();
+    for (const order of data) {
+      const key = orderKey(order);
+      if (key === null) continue;
+      countByKey.set(key, (countByKey.get(key) ?? 0) + 1);
+    }
+    return new Set(
+      [...countByKey].filter(([, n]) => n > 1).map(([key]) => key),
+    );
+  }, [data]);
+
+  // 重複下訂的訂單筆數（以訂單計，非客戶數），顯示於篩選開關。
+  const dupCount = useMemo(() => {
+    let n = 0;
+    for (const order of data) {
+      const key = orderKey(order);
+      if (key !== null && dupKeys.has(key)) n++;
+    }
+    return n;
+  }, [data, dupKeys]);
+
+  // 是否為重複下訂：姓名鍵為 null（防禦性，姓名必填）一律不算。
+  const isDup = (order: Order) => {
+    const key = orderKey(order);
+    return key !== null && dupKeys.has(key);
+  };
+
   const filtered = data.filter(
     (order) =>
-      order.customerName.includes(search) ||
-      (order.phone ?? "").includes(search) ||
-      (order.pickupSpotLabel ?? "").includes(search) ||
-      (order.shippingAddress ?? "").includes(search) ||
-      (formatPickupCode(order.spotCode, order.pickupNumber)
-        ?.toLowerCase()
-        .includes(search.toLowerCase()) ??
-        false) ||
-      String(order.id).includes(search),
+      (order.customerName.includes(search) ||
+        (order.phone ?? "").includes(search) ||
+        (order.pickupSpotLabel ?? "").includes(search) ||
+        (order.shippingAddress ?? "").includes(search) ||
+        (formatPickupCode(order.spotCode, order.pickupNumber)
+          ?.toLowerCase()
+          .includes(search.toLowerCase()) ??
+          false) ||
+        String(order.id).includes(search)) &&
+      (!dupOnly || isDup(order)),
   );
+
+  // 開啟篩選時讓同一客戶的訂單相鄰：以鍵首次出現於 data 的索引為組序，
+  // 組內靠穩定排序維持原相對順序；未開啟時完全不動既有排序。
+  if (dupOnly) {
+    const firstSeen = new Map<string, number>();
+    data.forEach((order, i) => {
+      const key = orderKey(order);
+      if (key !== null && !firstSeen.has(key)) firstSeen.set(key, i);
+    });
+    // dupOnly 下 filtered 內全為重複訂單（必有姓名鍵），firstSeen 必有值。
+    filtered.sort(
+      (a, b) => firstSeen.get(orderKey(a)!)! - firstSeen.get(orderKey(b)!)!,
+    );
+  }
 
   // 計算路線總金額與站點總金額
   const routeTotal = useMemo(() => {
@@ -570,6 +626,17 @@ export default function OrdersPage() {
       key: "customerName",
       width: 160,
       ellipsis: true,
+      render: (name: string, order: Order) =>
+        isDup(order) ? (
+          <>
+            {name}
+            <Tag color="orange" style={{ marginLeft: 4 }}>
+              重複
+            </Tag>
+          </>
+        ) : (
+          name
+        ),
     },
     {
       title: "來源",
@@ -590,7 +657,7 @@ export default function OrdersPage() {
       ),
     },
     {
-      title: "電話",
+      title: "聯絡電話",
       dataIndex: "phone",
       key: "phone",
       width: 140,
@@ -758,13 +825,20 @@ export default function OrdersPage() {
                 allowClear
               />
               <Input
-                placeholder="於結果內篩選 (客戶/電話/地址/取貨號)"
+                placeholder="於結果內篩選 (客戶/聯絡電話/地址/取貨號)"
                 prefix={<SearchOutlined />}
                 allowClear
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full sm:w-60"
               />
+              <Checkbox
+                checked={dupOnly}
+                disabled={dupCount === 0}
+                onChange={(e) => setDupOnly(e.target.checked)}
+              >
+                只看重複下訂（{dupCount} 筆）
+              </Checkbox>
               <Button
                 icon={<ReloadOutlined />}
                 onClick={() => {
@@ -1012,7 +1086,7 @@ export default function OrdersPage() {
             </Form.Item>
 
             <Space size="middle" className="w-full" wrap>
-              <Form.Item label="電話" name="phone">
+              <Form.Item label="聯絡電話" name="phone">
                 <Input placeholder="選填" />
               </Form.Item>
               <Form.Item

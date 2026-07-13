@@ -70,5 +70,5 @@ Required: `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `ALLOWED_EMAILS
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/010-product-inventory/plan.md`
+`specs/011-duplicate-order-filter/plan.md`
 <!-- SPECKIT END -->
