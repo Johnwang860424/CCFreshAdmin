@@ -303,6 +303,13 @@ export function validateCreateOrderBody(
     return badRequest(`客戶姓名不可超過 ${MAX_LEN.name} 字`);
   }
 
+  const trimmedPhone = typeof phone === "string" ? phone.trim() : "";
+  if (trimmedPhone) {
+    if (!/^09\d{8}$/.test(trimmedPhone)) {
+      return badRequest("請輸入有效的手機號碼");
+    }
+  }
+
   const tagVal = tag == null || tag === "" ? "網站" : tag;
   if (!ORDER_TAGS.includes(tagVal as OrderTag)) {
     return badRequest("來源標籤無效");
@@ -352,7 +359,7 @@ export function validateCreateOrderBody(
   return {
     value: {
       customerName: name,
-      phone: typeof phone === "string" && phone.trim() ? phone.trim() : null,
+      phone: trimmedPhone || null,
       tag: tagVal as OrderTag,
       deliveryMethod,
       pickupSpotId: spotId,
