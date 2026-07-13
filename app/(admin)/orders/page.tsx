@@ -382,7 +382,7 @@ export default function OrdersPage() {
           ?.requiresConfirmation === true;
       if (needsConfirm) {
         modal.confirm({
-          content: "系統偵測到您可能已有訂單。請確認是否為重複下單",
+          content: "系統偵測到您可能已有訂單，請確認是否為重複下單",
           okText: "仍要建立",
           cancelText: "取消",
           onOk: async () => {

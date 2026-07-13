@@ -55,7 +55,7 @@ export const POST = jsonHandler(async (request) => {
         {
           requiresConfirmation: true,
           duplicateCount,
-          error: "系統偵測到您可能已有訂單。請確認是否為重複下單",
+          error: "系統偵測到您可能已有訂單，請確認是否為重複下單",
         },
         { status: 409 },
       );
