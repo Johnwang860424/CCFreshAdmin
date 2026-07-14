@@ -35,6 +35,7 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
   await saveProductImages(id, newImageUrls);
   await updateProductDetails(
     id,
+    p.code,
     p.price,
     p.categoryId,
     p.spec,

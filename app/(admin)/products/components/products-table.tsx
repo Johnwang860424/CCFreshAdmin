@@ -92,6 +92,13 @@ export function ProductsTable({
         ),
     },
     {
+      title: "產品編號",
+      dataIndex: "code",
+      key: "code",
+      width: 100,
+      render: (code: string) => <Text>{code}</Text>,
+    },
+    {
       title: "產品名稱",
       dataIndex: "name",
       key: "name",

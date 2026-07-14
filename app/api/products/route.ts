@@ -18,6 +18,7 @@ export const POST = jsonHandler(async (request) => {
   if ("error" in images) return badRequest(images.error);
 
   await addProduct(
+    p.code,
     p.name,
     p.price,
     images.value,

@@ -7,6 +7,7 @@ CREATE TABLE categories (
 
 CREATE TABLE products (
   id           SERIAL PRIMARY KEY,
+  code         VARCHAR(3) NOT NULL,
   name         TEXT NOT NULL UNIQUE,
   price        INTEGER NOT NULL,
   category_id  INTEGER REFERENCES categories(id) ON DELETE RESTRICT,

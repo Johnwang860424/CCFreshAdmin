@@ -5,6 +5,7 @@ import { getPromoStrategy, type PromoConfig } from "@/app/lib/promotions";
 /** DB 原始列（snake_case）。 */
 interface ProductDbRow {
   id: number;
+  code: string;
   name: string;
   price: number;
   category_id: number;
@@ -22,6 +23,7 @@ interface ProductDbRow {
 /** 對外回傳的商品列（camelCase，附優惠摘要文字）。 */
 export interface ProductRow {
   id: number;
+  code: string;
   name: string;
   price: number;
   /** 封面圖：衍生自 images[0]（`products` 已無 image_url 欄）。無圖時為空字串。 */
@@ -50,6 +52,7 @@ function toProductRow(row: ProductDbRow): ProductRow {
   const images = row.images ?? [];
   return {
     id: row.id,
+    code: row.code,
     name: row.name,
     price: row.price,
     imageUrl: images[0] ?? "",
@@ -71,6 +74,7 @@ export const getProducts = unstable_cache(
     const rows = (await sql`
       SELECT
         p.id,
+        p.code,
         p.name,
         p.price,
         p.category_id,
@@ -100,6 +104,7 @@ export const getProducts = unstable_cache(
 );
 
 export async function addProduct(
+  code: string,
   name: string,
   price: number,
   imageUrls: string[],
@@ -115,9 +120,9 @@ export async function addProduct(
   // 再依序插入其 product_images（unnest WITH ORDINALITY 給 sort_order 1..n）。封面即 sort_order=1。
   await sql`
     WITH new_product AS (
-      INSERT INTO products (name, price, category_id, spec, description, promo_type, promo_config, sort_order, stock)
+      INSERT INTO products (code, name, price, category_id, spec, description, promo_type, promo_config, sort_order, stock)
       VALUES (
-        ${name}, ${price}, ${categoryId}, ${spec}, ${description}, ${promoType}, ${configJson}::jsonb,
+        ${code}, ${name}, ${price}, ${categoryId}, ${spec}, ${description}, ${promoType}, ${configJson}::jsonb,
         (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM products),
         ${stock}
       )
@@ -170,6 +175,7 @@ export async function reorderProducts(ids: number[]) {
  */
 export async function updateProductDetails(
   id: number,
+  code: string,
   price: number,
   categoryId: number,
   spec: string | null,
@@ -181,7 +187,8 @@ export async function updateProductDetails(
   const configJson = promoConfig === null ? null : JSON.stringify(promoConfig);
   await sql`
     UPDATE products
-    SET price = ${price},
+    SET code = ${code},
+        price = ${price},
         category_id = ${categoryId},
         spec = ${spec},
         description = ${description},
