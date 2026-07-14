@@ -145,6 +145,7 @@ export function validateProductImages(
  * 圖片集合另由 validateProductImages 驗證，不在此結構內。
  */
 export interface ValidatedProduct {
+  code: string;
   name: string;
   price: number;
   categoryId: number;
@@ -166,6 +167,7 @@ export function validateProductBody(
   { requireName }: { requireName: boolean },
 ): { value: ValidatedProduct } | { error: string } {
   const {
+    code,
     name,
     price,
     categoryId,
@@ -175,6 +177,7 @@ export function validateProductBody(
     promoConfig,
     stock,
   } = (body ?? {}) as {
+    code?: string | null;
     name?: string;
     price?: number | string;
     categoryId?: number | string;
@@ -184,6 +187,14 @@ export function validateProductBody(
     promoConfig?: unknown;
     stock?: number | string | null;
   };
+
+  const codeVal = typeof code === "string" ? code.trim() : "";
+  if (!codeVal) {
+    return { error: "產品編號為必填欄位" };
+  }
+  if (codeVal.length > 3) {
+    return { error: "產品編號不可超過 3 個字" };
+  }
 
   const priceNum = Number(price);
   const priceValid =
@@ -231,6 +242,7 @@ export function validateProductBody(
 
   return {
     value: {
+      code: codeVal,
       name: nameVal,
       price: priceNum,
       categoryId: categoryNum,

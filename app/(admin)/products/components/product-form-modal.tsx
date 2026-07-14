@@ -172,6 +172,7 @@ export function ProductFormModal({
 
     if (editing) {
       form.setFieldsValue({
+        code: editing.code,
         name: editing.name,
         price: editing.price,
         stock: editing.stock ?? undefined,
@@ -267,6 +268,7 @@ export function ProductFormModal({
     if (uploading) return;
 
     let values: {
+      code: string;
       name: string;
       price: string;
       stock?: number | null;
@@ -308,6 +310,7 @@ export function ProductFormModal({
       setSaving(true);
       if (editing) {
         await putJson(`/api/products/${editing.id}`, {
+          code: values.code,
           price: priceNum,
           stock: values.stock ?? null,
           imageUrls,
@@ -319,6 +322,7 @@ export function ProductFormModal({
         messageApi.success("商品已更新");
       } else {
         await postJson("/api/products", {
+          code: values.code,
           name: values.name,
           price: priceNum,
           stock: values.stock ?? null,
@@ -387,6 +391,17 @@ export function ProductFormModal({
           style={{ marginTop: 16 }}
           disabled={modalBusy}
         >
+          <Form.Item
+            name="code"
+            label="產品編號"
+            rules={[
+              { required: true, message: "請輸入產品編號" },
+              { max: 3, message: "產品編號不可超過 3 個字" },
+            ]}
+          >
+            <Input placeholder="例：1" maxLength={3} />
+          </Form.Item>
+
           <Form.Item
             name="name"
             label="產品名稱"

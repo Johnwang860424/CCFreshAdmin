@@ -116,10 +116,22 @@ describe("validateProductImages", () => {
 
 describe("validateProductBody", () => {
   const base = {
+    code: "M01",
     name: "芒果",
     price: 100,
     categoryId: 1,
   };
+
+  it("產品編號驗證：必填且不可超過 3 字", () => {
+    expect(
+      validateProductBody({ ...base, code: "" }, { requireName: true }),
+    ).toEqual({ error: "產品編號為必填欄位" });
+    expect(
+      validateProductBody({ ...base, code: "A001" }, { requireName: true }),
+    ).toEqual({ error: "產品編號不可超過 3 個字" });
+    const ok = validateProductBody({ ...base, code: " a1 " }, { requireName: true });
+    expect("value" in ok && ok.value.code).toBe("a1");
+  });
 
   it("新增（requireName）驗證名稱與價格並正規化欄位", () => {
     const parsed = validateProductBody(
@@ -128,6 +140,7 @@ describe("validateProductBody", () => {
     );
     expect(parsed).toEqual({
       value: {
+        code: "M01",
         name: "芒果",
         price: 100,
         categoryId: 1,
@@ -142,7 +155,7 @@ describe("validateProductBody", () => {
 
   it("更新（不驗名稱）name 回空字串", () => {
     const parsed = validateProductBody(
-      { price: 50, categoryId: 2 },
+      { code: "M01", price: 50, categoryId: 2 },
       { requireName: false },
     );
     expect("value" in parsed && parsed.value.name).toBe("");
@@ -155,7 +168,7 @@ describe("validateProductBody", () => {
       ).toEqual({ error: "商品名稱和有效價格（非負整數）為必填欄位" });
     }
     expect(
-      validateProductBody({ price: -1, categoryId: 1 }, { requireName: false }),
+      validateProductBody({ code: "M01", price: -1, categoryId: 1 }, { requireName: false }),
     ).toEqual({ error: "有效價格（非負整數）為必填欄位" });
   });
 
