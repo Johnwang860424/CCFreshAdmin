@@ -17,7 +17,7 @@ import { stockInsufficiencyMessage } from "@/app/domain/stock";
 export type { OrderItemRow, OrderRow } from "@/app/domain/order-assembly";
 export type { CloseGroupSummary } from "@/app/domain/close-groups";
 
-/** 取得所有訂單（含明細），按建立順序排列。供結單 CSV 匯出使用。 */
+/** 取得所有訂單（含明細），按來源分類排列（FB→Line→網站→其他），供結單 CSV 匯出使用。 */
 export async function getOrders(): Promise<OrderRow[]> {
   const orderRows = await sql`
     SELECT o.id, o.customer_name, o.phone, o.delivery_method, o.pickup_spot_id,
@@ -34,7 +34,14 @@ export async function getOrders(): Promise<OrderRow[]> {
     FROM orders o
     LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
     LEFT JOIN routes r ON r.id = ps.route_id
-    ORDER BY o.id ASC
+    ORDER BY 
+      CASE o.tag
+        WHEN 'FB' THEN 1
+        WHEN 'Line' THEN 2
+        WHEN '網站' THEN 3
+        ELSE 4
+      END ASC,
+      o.id ASC
   `;
 
   const itemRows = await sql`
@@ -70,7 +77,14 @@ export async function getOrdersByIds(ids: number[]): Promise<OrderRow[]> {
     LEFT JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
     LEFT JOIN routes r ON r.id = ps.route_id
     WHERE o.id = ANY(${ids})
-    ORDER BY o.id ASC
+    ORDER BY 
+      CASE o.tag
+        WHEN 'FB' THEN 1
+        WHEN 'Line' THEN 2
+        WHEN '網站' THEN 3
+        ELSE 4
+      END ASC,
+      o.id ASC
   `;
 
   if (orderRows.length === 0) return [];
@@ -119,7 +133,14 @@ export async function getOrdersByRoute(
     LEFT JOIN routes r ON r.id = ps.route_id
     WHERE o.delivery_method = 'pickup'
       AND ps.route_id IS NOT DISTINCT FROM ${routeId}
-    ORDER BY o.created_at DESC
+    ORDER BY 
+      CASE o.tag
+        WHEN 'FB' THEN 1
+        WHEN 'Line' THEN 2
+        WHEN '網站' THEN 3
+        ELSE 4
+      END ASC,
+      o.created_at DESC
   `;
 
   if (orderRows.length === 0) return [];
@@ -146,7 +167,14 @@ export async function getDeliveryOrders(): Promise<OrderRow[]> {
            NULL AS pickup_spot_label
     FROM orders o
     WHERE o.delivery_method = 'delivery'
-    ORDER BY o.created_at DESC
+    ORDER BY 
+      CASE o.tag
+        WHEN 'FB' THEN 1
+        WHEN 'Line' THEN 2
+        WHEN '網站' THEN 3
+        ELSE 4
+      END ASC,
+      o.created_at DESC
   `;
 
   if (orderRows.length === 0) return [];
