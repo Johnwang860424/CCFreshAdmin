@@ -109,6 +109,7 @@ describe("buildOrdersWorkbook", () => {
     expect(pickup[0]).toEqual([
       "取貨號",
       "客戶姓名",
+      "來源",
       "取貨地點",
       "購買清單",
       "訂單總額",
@@ -119,6 +120,7 @@ describe("buildOrdersWorkbook", () => {
     expect(pickup[1]).toEqual([
       "A5",
       "王小明",
+      "網站",
       "西區",
       "芒果*3",
       300,
@@ -128,9 +130,10 @@ describe("buildOrdersWorkbook", () => {
 
     // 宅配：取貨號為純數字、地點＝收件地址；空欄輸出為空
     const delivery = sheets.get("宅配")!;
-    expect(delivery[1].slice(0, 5)).toEqual([
+    expect(delivery[1].slice(0, 6)).toEqual([
       "7",
       "李小華",
+      "網站",
       "台北市大安區和平東路 1 號",
       "鳳梨*1",
       60,
@@ -171,6 +174,25 @@ describe("buildOrdersWorkbook", () => {
     );
     const [name] = [...sheets.keys()];
     expect(name).toBe("台中市  西 區 測試");
-    expect(sheets.get(name)![1][3]).toBe("芒果*2/鳳梨*1");
+    expect(sheets.get(name)![1][4]).toBe("芒果*2/鳳梨*1"); // index changed from 3 to 4 because of the new '來源' column!
+  });
+
+  it("匯出選取訂單保留傳入訂單的排序", () => {
+    const sheets = readBack(
+      buildOrdersWorkbook([
+        order({ id: 1, customerName: "B" }),
+        order({ id: 2, customerName: "E" }),
+        order({ id: 3, customerName: "C" }),
+        order({ id: 4, customerName: "A" }),
+        order({ id: 5, customerName: "D" }),
+      ]),
+    );
+
+    const sheet = sheets.get("台中市 西區")!;
+    expect(sheet[1][1]).toBe("B");
+    expect(sheet[2][1]).toBe("E");
+    expect(sheet[3][1]).toBe("C");
+    expect(sheet[4][1]).toBe("A");
+    expect(sheet[5][1]).toBe("D");
   });
 });
