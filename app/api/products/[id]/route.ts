@@ -4,7 +4,7 @@ import {
   saveProductImages,
   updateProductDetails,
 } from "@/app/lib/products";
-import { jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler } from "@/app/lib/api";
 import { deleteCloudinaryImage } from "@/app/lib/cloudinary";
 import { revalidateCache } from "@/app/lib/revalidate";
 import {
@@ -18,16 +18,16 @@ type Params = { params: Promise<{ id: string }> };
 export const PUT = jsonHandler<Params>(async (request, { params }) => {
   const { id: idStr } = await params;
   const parsedId = parseId(idStr);
-  if ("error" in parsedId) return parsedId.error;
+  if ("error" in parsedId) return badRequest(parsedId.error);
   const { id } = parsedId;
 
   const body = await request.json();
   const parsed = validateProductBody(body, { requireName: false });
-  if ("error" in parsed) return parsed.error;
+  if ("error" in parsed) return badRequest(parsed.error);
   const p = parsed.value;
 
   const images = validateProductImages((body as { imageUrls?: unknown }).imageUrls);
-  if ("error" in images) return images.error;
+  if ("error" in images) return badRequest(images.error);
   const newImageUrls = images.value;
 
   // 先取舊圖集合以便算差集，再原子寫入新集合（含封面鏡射）與其餘欄位。
@@ -55,7 +55,7 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
 export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
   const { id: idStr } = await params;
   const parsed = parseId(idStr);
-  if ("error" in parsed) return parsed.error;
+  if ("error" in parsed) return badRequest(parsed.error);
   const { id } = parsed;
 
   // 先取全部圖 URL，刪商品（CASCADE 清 product_images）後再刪 Cloudinary 全部檔。

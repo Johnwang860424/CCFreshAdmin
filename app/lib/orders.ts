@@ -1,101 +1,21 @@
 import { sql } from "@/app/lib/db";
 import { calcLineSubtotal, type PromoConfig } from "@/app/lib/promotions";
 import type {
+  ValidatedBatchOrderAdjustment,
   ValidatedCreateOrder,
   ValidatedUpdateOrderItem,
 } from "@/app/lib/validation";
+import { assembleOrders, type OrderRow } from "@/app/domain/order-assembly";
+import { buildRouteMatrix } from "@/app/domain/route-matrix";
+import {
+  summarizeCloseGroups,
+  type CloseGroupSummary,
+} from "@/app/domain/close-groups";
+import { stockInsufficiencyMessage } from "@/app/domain/stock";
 
-export interface OrderItemRow {
-  id: number;
-  orderId: number;
-  productName: string;
-  unitPrice: number;
-  quantity: number;
-  /** 下單當下的促銷快照（NULL = 無促銷） */
-  promoType: string | null;
-  promoConfig: PromoConfig | null;
-  /** 折扣後的實付小計，可能不等於 unitPrice × quantity */
-  subtotal: number;
-}
-
-export interface OrderRow {
-  id: number;
-  customerName: string;
-  phone: string | null;
-  deliveryMethod: string;
-  /** 自取點 id（宅配為 null） */
-  pickupSpotId: number | null;
-  /** 自取點顯示名稱（縣市 + 鄉鎮），由 pickup_spots 即時關聯而來；宅配或取貨點已刪除為 null */
-  pickupSpotLabel: string | null;
-  /** 自取點縣市（不含鄉鎮）；宅配或取貨點已刪除為 null。供匯出時依縣市分頁使用。 */
-  pickupSpotCity: string | null;
-  /** 自取點鄉鎮（不含縣市）；宅配或取貨點已刪除為 null */
-  pickupSpotTownship: string | null;
-  /** 所屬路線 id（經取貨點關聯）；宅配、未分路線或取貨點已刪除為 null */
-  routeId: number | null;
-  /** 所屬路線名稱；宅配、未分路線或取貨點已刪除為 null */
-  routeName: string | null;
-  /** 所屬站點代碼（JOIN pickup_spots.code 即時取得，管理員可改）；宅配為 null */
-  spotCode: string | null;
-  /**
-   * 現場取貨號碼牌的數字部分（每取貨點各自遞增；宅配走自己的序列）。
-   * 顯示時由 app/lib/pickup-code.ts 組成「站點代碼＋流水號」（如 A5）；DB 只存整數。
-   */
-  pickupNumber: number | null;
-  shippingAddress: string | null;
-  note: string | null;
-  total: number;
-  /** 來源標籤：網站（預設）/ FB / Line */
-  tag: string;
-  createdAt: string;
-  items: OrderItemRow[];
-}
-
-/** 將訂單列與明細列組裝成 OrderRow（明細掛回各自訂單） */
-function assembleOrders(
-  orderRows: Record<string, unknown>[],
-  itemRows: Record<string, unknown>[],
-): OrderRow[] {
-  const itemsByOrderId = new Map<number, OrderItemRow[]>();
-  for (const r of itemRows) {
-    const orderId = r.order_id as number;
-    const item: OrderItemRow = {
-      id: r.id as number,
-      orderId,
-      productName: r.product_name as string,
-      unitPrice: r.unit_price as number,
-      quantity: r.quantity as number,
-      promoType: (r.promo_type as string) ?? null,
-      promoConfig: (r.promo_config as PromoConfig) ?? null,
-      subtotal: r.subtotal as number,
-    };
-    if (!itemsByOrderId.has(orderId)) {
-      itemsByOrderId.set(orderId, []);
-    }
-    itemsByOrderId.get(orderId)!.push(item);
-  }
-
-  return orderRows.map((r) => ({
-    id: r.id as number,
-    customerName: r.customer_name as string,
-    phone: (r.phone as string) ?? null,
-    deliveryMethod: r.delivery_method as string,
-    pickupSpotId: (r.pickup_spot_id as number) ?? null,
-    pickupSpotLabel: (r.pickup_spot_label as string) ?? null,
-    pickupSpotCity: (r.pickup_spot_city as string) ?? null,
-    pickupSpotTownship: (r.pickup_spot_township as string) ?? null,
-    routeId: (r.route_id as number) ?? null,
-    routeName: (r.route_name as string) ?? null,
-    spotCode: (r.spot_code as string) ?? null,
-    pickupNumber: (r.pickup_number as number) ?? null,
-    shippingAddress: (r.shipping_address as string) ?? null,
-    note: (r.note as string) ?? null,
-    total: r.total as number,
-    tag: (r.tag as string) ?? "網站",
-    createdAt: r.created_at as string,
-    items: itemsByOrderId.get(r.id as number) ?? [],
-  }));
-}
+// 資料形狀與純組裝/彙整邏輯移至 app/domain/*（可單元測試）；此處保留 re-export 維持既有引用點。
+export type { OrderItemRow, OrderRow } from "@/app/domain/order-assembly";
+export type { CloseGroupSummary } from "@/app/domain/close-groups";
 
 /** 取得所有訂單（含明細），按建立順序排列。供結單 CSV 匯出使用。 */
 export async function getOrders(): Promise<OrderRow[]> {
@@ -118,7 +38,7 @@ export async function getOrders(): Promise<OrderRow[]> {
   `;
 
   const itemRows = await sql`
-    SELECT id, order_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
+    SELECT id, order_id, product_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
     FROM order_items
     ORDER BY id
   `;
@@ -157,7 +77,7 @@ export async function getOrdersByIds(ids: number[]): Promise<OrderRow[]> {
 
   const orderIds = orderRows.map((r) => r.id as number);
   const itemRows = await sql`
-    SELECT id, order_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
+    SELECT id, order_id, product_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
     FROM order_items
     WHERE order_id = ANY(${orderIds})
     ORDER BY id
@@ -206,7 +126,7 @@ export async function getOrdersByRoute(
 
   const orderIds = orderRows.map((r) => r.id as number);
   const itemRows = await sql`
-    SELECT id, order_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
+    SELECT id, order_id, product_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
     FROM order_items
     WHERE order_id = ANY(${orderIds})
     ORDER BY id
@@ -233,7 +153,7 @@ export async function getDeliveryOrders(): Promise<OrderRow[]> {
 
   const orderIds = orderRows.map((r) => r.id as number);
   const itemRows = await sql`
-    SELECT id, order_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
+    SELECT id, order_id, product_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
     FROM order_items
     WHERE order_id = ANY(${orderIds})
     ORDER BY id
@@ -340,42 +260,7 @@ export async function getRouteOrderMatrix(
           ORDER BY ps.city, ps.sort_order, ps.id
         `;
 
-  // 以 Map 保留查詢回傳的取貨點順序（已依 city, sort_order, id 排序）。
-  const bySpot = new Map<
-    number,
-    { label: string; quantities: Record<string, number> }
-  >();
-  const productTotals: Record<string, number> = {};
-  // 商品欄位排序鍵：依 products.sort_order（已刪除商品的 product_id 為 NULL → 排最後）。
-  const productSortKey = new Map<string, number>();
-
-  for (const r of rows) {
-    const spotId = r.spot_id as number;
-    const label = `${r.city as string} ${r.township as string}`;
-    const product = r.product_name as string;
-    const qty = r.qty as number;
-    const productSort = (r.product_sort as number) ?? Number.MAX_SAFE_INTEGER;
-
-    if (!productSortKey.has(product)) productSortKey.set(product, productSort);
-    if (!bySpot.has(spotId)) bySpot.set(spotId, { label, quantities: {} });
-    bySpot.get(spotId)!.quantities[product] = qty;
-    productTotals[product] = (productTotals[product] ?? 0) + qty;
-  }
-
-  // 商品欄位依 products.sort_order 排序；同序則以名稱（zh-Hant）穩定排序。
-  const products = [...productSortKey.keys()].sort((a, b) => {
-    const sa = productSortKey.get(a)!;
-    const sb = productSortKey.get(b)!;
-    return sa !== sb ? sa - sb : a.localeCompare(b, "zh-Hant");
-  });
-
-  const resultRows = [...bySpot.entries()].map(
-    ([pickupSpotId, { label, quantities }]) => ({
-      pickupSpotId,
-      label,
-      quantities,
-    }),
-  );
+  const pivot = buildRouteMatrix(rows);
 
   let routeName: string | null = null;
   if (typeof route === "number") {
@@ -383,17 +268,7 @@ export async function getRouteOrderMatrix(
     routeName = (nameRows[0]?.name as string) ?? null;
   }
 
-  return { route, routeName, from, to, products, rows: resultRows, productTotals };
-}
-
-/** 結單分組彙整：宅配為一組，自取則依「路線」（含未分路線）各成一組 */
-export interface CloseGroupSummary {
-  key: string;
-  method: "pickup" | "delivery";
-  /** 自取分組所屬路線 id；未分路線為 null。宅配為 null。 */
-  routeId: number | null;
-  display: string;
-  count: number;
+  return { route, routeName, from, to, ...pivot };
 }
 
 /**
@@ -412,33 +287,7 @@ export async function getCloseGroups(): Promise<CloseGroupSummary[]> {
     GROUP BY o.delivery_method, ps.route_id, r.name
   `;
 
-  const groups: CloseGroupSummary[] = rows.map((r) => {
-    const method = r.method as string;
-    const count = r.count as number;
-    if (method === "delivery") {
-      return {
-        key: "delivery",
-        method: "delivery",
-        routeId: null,
-        display: "宅配",
-        count,
-      };
-    }
-    const routeId = (r.route_id as number) ?? null;
-    return {
-      key: `route:${routeId ?? "∅"}`,
-      method: "pickup",
-      routeId,
-      display: (r.route_name as string) ?? "未分路線",
-      count,
-    };
-  });
-
-  // 自取點排前、宅配排後，組內依名稱排序
-  return groups.sort((a, b) => {
-    if (a.method !== b.method) return a.method === "pickup" ? -1 : 1;
-    return a.display.localeCompare(b.display, "zh-Hant");
-  });
+  return summarizeCloseGroups(rows);
 }
 
 /** 後台新增訂單時的業務性錯誤（如商品/取貨點不存在）；route 層據此回 400。 */
@@ -464,18 +313,14 @@ interface ProductSnapshot {
 
 /**
  * 對照「每商品需求量」與目前剩餘庫存，組「庫存不足」錯誤；全部足夠回 null。
- * 訊息格式為 SC-003 契約：「商品名」庫存不足（剩餘 N），多筆以「；」併列。
+ * 訊息組字（SC-003 契約）在 app/domain/stock.ts。
  */
 function stockErrorFromRows(
   rows: { id: number; name: string; stock: number | null }[],
   wantedByProductId: Map<number, number>,
 ): OrderInputError | null {
-  const parts = rows
-    .filter(
-      (r) => r.stock !== null && (wantedByProductId.get(r.id) ?? 0) > r.stock,
-    )
-    .map((r) => `「${r.name}」庫存不足（剩餘 ${r.stock}）`);
-  return parts.length > 0 ? new OrderInputError(parts.join("；")) : null;
+  const message = stockInsufficiencyMessage(rows, wantedByProductId);
+  return message !== null ? new OrderInputError(message) : null;
 }
 
 /**
@@ -706,7 +551,7 @@ export async function getOrderById(id: number): Promise<OrderRow | null> {
   if (orderRows.length === 0) return null;
 
   const itemRows = await sql`
-    SELECT id, order_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
+    SELECT id, order_id, product_id, product_name, unit_price, quantity, promo_type, promo_config, subtotal
     FROM order_items
     WHERE order_id = ${id}
     ORDER BY id
@@ -910,6 +755,108 @@ export async function updateOrderItems(
   if (rows.length === 0) return null;
 
   return getOrderById(id);
+}
+
+interface BatchAdjustmentSnapshot {
+  id: number;
+  unit_price: number;
+  promo_type: string | null;
+  promo_config: PromoConfig | null;
+}
+
+/** 缺貨專用批次減量：不異動庫存，數量為 0 的明細仍保留。 */
+export async function batchAdjustOrderItems(
+  input: ValidatedBatchOrderAdjustment,
+): Promise<{ updatedItems: number; updatedOrders: number }> {
+  const itemIds = input.changes.map((change) => change.orderItemId);
+  const snapshotRows = (await sql`
+    SELECT id, unit_price, promo_type, promo_config
+    FROM order_items
+    WHERE id = ANY(${itemIds})
+  `) as BatchAdjustmentSnapshot[];
+  const snapshotById = new Map(snapshotRows.map((row) => [row.id, row]));
+  if (snapshotById.size !== itemIds.length) {
+    throw new OrderInputError("部分訂單明細已變更，請重新整理後再試");
+  }
+
+  const orderIdArr = input.changes.map((change) => change.orderId);
+  const expectedQuantityArr = input.changes.map((change) => change.expectedQuantity);
+  const newQuantityArr = input.changes.map((change) => change.newQuantity);
+  const newSubtotalArr = input.changes.map((change) => {
+    const snapshot = snapshotById.get(change.orderItemId)!;
+    const promo = snapshot.promo_type && snapshot.promo_config
+      ? { type: snapshot.promo_type, config: snapshot.promo_config }
+      : null;
+    return calcLineSubtotal(promo, snapshot.unit_price, change.newQuantity);
+  });
+  const result = (await sql`
+    WITH input AS (
+      SELECT * FROM unnest(
+        ${itemIds}::int[],
+        ${orderIdArr}::int[],
+        ${expectedQuantityArr}::int[],
+        ${newQuantityArr}::int[],
+        ${newSubtotalArr}::int[]
+      ) AS t(item_id, order_id, expected_quantity, new_quantity, new_subtotal)
+    ),
+    target AS MATERIALIZED (
+      SELECT i.*, oi.subtotal AS old_subtotal
+      FROM input i
+      JOIN order_items oi
+        ON oi.id = i.item_id
+       AND oi.order_id = i.order_id
+       AND oi.product_id = ${input.productId}
+       AND oi.quantity = i.expected_quantity
+      JOIN orders o ON o.id = oi.order_id
+      WHERE (
+        ${input.method} = 'delivery' AND o.delivery_method = 'delivery'
+      ) OR (
+        ${input.method} = 'pickup'
+        AND o.delivery_method = 'pickup'
+        AND EXISTS (
+          SELECT 1 FROM pickup_spots ps
+          WHERE ps.id = o.pickup_spot_id
+            AND ps.route_id IS NOT DISTINCT FROM ${input.routeId}
+        )
+      )
+      FOR UPDATE OF oi
+    ),
+    valid AS (
+      SELECT (SELECT COUNT(*) FROM target) = (SELECT COUNT(*) FROM input) AS ok
+    ),
+    updated AS (
+      UPDATE order_items oi
+      SET quantity = target.new_quantity,
+          subtotal = target.new_subtotal
+      FROM target, valid
+      WHERE valid.ok AND oi.id = target.item_id
+      RETURNING oi.order_id, target.old_subtotal, target.new_subtotal
+    ),
+    delta AS (
+      SELECT order_id, SUM(new_subtotal - old_subtotal)::int AS amount
+      FROM updated
+      GROUP BY order_id
+    ),
+    updated_orders AS (
+      UPDATE orders o
+      SET total = o.total + delta.amount
+      FROM delta
+      WHERE o.id = delta.order_id
+      RETURNING o.id
+    )
+    SELECT
+      (SELECT COUNT(*)::int FROM updated) AS updated_items,
+      (SELECT COUNT(*)::int FROM updated_orders) AS updated_orders
+  `) as { updated_items: number; updated_orders: number }[];
+
+  const updatedItems = Number(result[0]?.updated_items ?? 0);
+  if (updatedItems !== input.changes.length) {
+    throw new OrderInputError("部分訂單明細已變更，請重新整理後再試");
+  }
+  return {
+    updatedItems,
+    updatedOrders: Number(result[0]?.updated_orders ?? 0),
+  };
 }
 
 /**

@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+// 請求驗證工具：框架無關（不依賴 next / DOM），失敗回傳 { error: string }，
+// 由 route 層以 badRequest()（app/lib/api.ts）轉為 400 回應。
 import { validatePromo, type PromoConfig } from "@/app/lib/promotions";
 
 /** 後端文字欄位的最大長度限制，避免超長字串造成 DB 壓力。 */
@@ -10,47 +11,41 @@ export const MAX_LEN = {
   routeName: 50,
 } as const;
 
-/** 解析並驗證路由的 `id` 參數為正整數，失敗時回傳 400 response。 */
+/** 解析並驗證路由的 `id` 參數為正整數，失敗時回傳錯誤訊息。 */
 export function parseId(
   idStr: string,
-): { id: number } | { error: NextResponse } {
+): { id: number } | { error: string } {
   const id = Number(idStr);
   if (!Number.isInteger(id) || id <= 0) {
-    return {
-      error: NextResponse.json({ error: "無效的 ID 格式" }, { status: 400 }),
-    };
+    return { error: "無效的 ID 格式" };
   }
   return { id };
 }
 
-function badRequest(message: string): { error: NextResponse } {
-  return { error: NextResponse.json({ error: message }, { status: 400 }) };
-}
-
 /**
  * 解析取貨點所屬路線 id：null/undefined → null（未分路線）；正整數 → 該 id；
- * 其餘（字串、0、負數、非整數）→ 400。
+ * 其餘（字串、0、負數、非整數）→ 錯誤。
  */
 export function parseRouteId(
   routeId: unknown,
-): { value: number | null } | { error: NextResponse } {
+): { value: number | null } | { error: string } {
   if (routeId === null || routeId === undefined) return { value: null };
   if (Number.isInteger(routeId) && (routeId as number) > 0) {
     return { value: routeId as number };
   }
-  return badRequest("無效的路線");
+  return { error: "無效的路線" };
 }
 
 /**
- * 解析站點代碼（取貨號碼前綴）：trim → 轉大寫 → 須為 1–3 個英文字母，不符回 400。
+ * 解析站點代碼（取貨號碼前綴）：trim → 轉大寫 → 須為 1–3 個英文字母，不符回錯誤。
  * 一律以大寫回傳（儲存與顯示皆大寫，同路線唯一性因此天然不分大小寫）。
  */
 export function parseSpotCode(
   code: unknown,
-): { value: string } | { error: NextResponse } {
+): { value: string } | { error: string } {
   const raw = typeof code === "string" ? code.trim().toUpperCase() : "";
   if (!/^[A-Z]{1,3}$/.test(raw)) {
-    return badRequest("站點代碼須為 1–3 個英文字母");
+    return { error: "站點代碼須為 1–3 個英文字母" };
   }
   return { value: raw };
 }
@@ -61,15 +56,15 @@ export function parseSpotCode(
  */
 export function validateReorderBody(
   body: unknown,
-): { value: number[] } | { error: NextResponse } {
+): { value: number[] } | { error: string } {
   const { ids } = (body ?? {}) as { ids?: unknown };
 
   if (!Array.isArray(ids) || ids.length === 0) {
-    return badRequest("排序資料格式錯誤");
+    return { error: "排序資料格式錯誤" };
   }
   const allValid = ids.every((id) => Number.isInteger(id) && (id as number) > 0);
   if (!allValid || new Set(ids).size !== ids.length) {
-    return badRequest("排序資料格式錯誤");
+    return { error: "排序資料格式錯誤" };
   }
 
   return { value: ids as number[] };
@@ -82,18 +77,18 @@ export function validateReorderBody(
  */
 export function validatePickupReorderBody(
   body: unknown,
-): { value: { city: string; ids: number[] } } | { error: NextResponse } {
+): { value: { city: string; ids: number[] } } | { error: string } {
   const { city, ids } = (body ?? {}) as { city?: unknown; ids?: unknown };
 
   if (typeof city !== "string" || city.trim() === "") {
-    return badRequest("排序資料格式錯誤");
+    return { error: "排序資料格式錯誤" };
   }
   if (!Array.isArray(ids) || ids.length === 0) {
-    return badRequest("排序資料格式錯誤");
+    return { error: "排序資料格式錯誤" };
   }
   const allValid = ids.every((id) => Number.isInteger(id) && (id as number) > 0);
   if (!allValid || new Set(ids).size !== ids.length) {
-    return badRequest("排序資料格式錯誤");
+    return { error: "排序資料格式錯誤" };
   }
 
   return { value: { city, ids: ids as number[] } };
@@ -105,15 +100,15 @@ export function validatePickupReorderBody(
  */
 export function validateOrderIdsBody(
   body: unknown,
-): { value: number[] } | { error: NextResponse } {
+): { value: number[] } | { error: string } {
   const { ids } = (body ?? {}) as { ids?: unknown };
 
   if (!Array.isArray(ids) || ids.length === 0) {
-    return badRequest("選取資料格式錯誤");
+    return { error: "選取資料格式錯誤" };
   }
   const allValid = ids.every((id) => Number.isInteger(id) && (id as number) > 0);
   if (!allValid || new Set(ids).size !== ids.length) {
-    return badRequest("選取資料格式錯誤");
+    return { error: "選取資料格式錯誤" };
   }
 
   return { value: ids as number[] };
@@ -128,17 +123,17 @@ export const MAX_PRODUCT_IMAGES = 8;
  */
 export function validateProductImages(
   imageUrls: unknown,
-): { value: string[] } | { error: NextResponse } {
+): { value: string[] } | { error: string } {
   if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
-    return badRequest(`商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張`);
+    return { error: `商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張` };
   }
   if (imageUrls.length > MAX_PRODUCT_IMAGES) {
-    return badRequest(`商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張`);
+    return { error: `商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張` };
   }
   const cleaned: string[] = [];
   for (const url of imageUrls) {
     if (typeof url !== "string" || url.trim() === "") {
-      return badRequest(`商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張`);
+      return { error: `商品圖片需為 1 至 ${MAX_PRODUCT_IMAGES} 張` };
     }
     cleaned.push(url.trim());
   }
@@ -169,7 +164,7 @@ export interface ValidatedProduct {
 export function validateProductBody(
   body: unknown,
   { requireName }: { requireName: boolean },
-): { value: ValidatedProduct } | { error: NextResponse } {
+): { value: ValidatedProduct } | { error: string } {
   const {
     name,
     price,
@@ -198,30 +193,30 @@ export function validateProductBody(
   if (requireName) {
     nameVal = name?.trim() ?? "";
     if (!nameVal || !priceValid) {
-      return badRequest("商品名稱和有效價格（非負整數）為必填欄位");
+      return { error: "商品名稱和有效價格（非負整數）為必填欄位" };
     }
     if (nameVal.length > MAX_LEN.name) {
-      return badRequest(`商品名稱不可超過 ${MAX_LEN.name} 字`);
+      return { error: `商品名稱不可超過 ${MAX_LEN.name} 字` };
     }
   } else if (!priceValid) {
-    return badRequest("有效價格（非負整數）為必填欄位");
+    return { error: "有效價格（非負整數）為必填欄位" };
   }
 
   if (spec && spec.length > MAX_LEN.spec) {
-    return badRequest(`規格不可超過 ${MAX_LEN.spec} 字`);
+    return { error: `規格不可超過 ${MAX_LEN.spec} 字` };
   }
   if (description && description.length > MAX_LEN.description) {
-    return badRequest(`說明不可超過 ${MAX_LEN.description} 字`);
+    return { error: `說明不可超過 ${MAX_LEN.description} 字` };
   }
 
   const categoryNum = Number(categoryId);
   if (!Number.isInteger(categoryNum) || categoryNum <= 0) {
-    return badRequest("請選擇分類");
+    return { error: "請選擇分類" };
   }
 
   const promo = validatePromo(promoType, promoConfig);
   if ("error" in promo) {
-    return badRequest(promo.error);
+    return { error: promo.error };
   }
 
   // 庫存：缺省/null/空字串 → null（不限量）；否則須為非負整數。
@@ -229,7 +224,7 @@ export function validateProductBody(
   if (stock !== undefined && stock !== null && String(stock).trim() !== "") {
     const stockNum = Number(stock);
     if (!Number.isInteger(stockNum) || stockNum < 0) {
-      return badRequest("庫存必須為 0 或正整數");
+      return { error: "庫存必須為 0 或正整數" };
     }
     stockVal = stockNum;
   }
@@ -276,7 +271,7 @@ export interface ValidatedCreateOrder {
  */
 export function validateCreateOrderBody(
   body: unknown,
-): { value: ValidatedCreateOrder } | { error: NextResponse } {
+): { value: ValidatedCreateOrder } | { error: string } {
   const {
     customerName,
     phone,
@@ -298,40 +293,40 @@ export function validateCreateOrderBody(
   };
 
   const name = typeof customerName === "string" ? customerName.trim() : "";
-  if (!name) return badRequest("客戶姓名為必填");
+  if (!name) return { error: "客戶姓名為必填" };
   if (name.length > MAX_LEN.name) {
-    return badRequest(`客戶姓名不可超過 ${MAX_LEN.name} 字`);
+    return { error: `客戶姓名不可超過 ${MAX_LEN.name} 字` };
   }
 
   const trimmedPhone = typeof phone === "string" ? phone.trim() : "";
   if (trimmedPhone) {
     if (!/^09\d{8}$/.test(trimmedPhone)) {
-      return badRequest("請輸入有效的手機號碼");
+      return { error: "請輸入有效的手機號碼" };
     }
   }
 
   const tagVal = tag == null || tag === "" ? "網站" : tag;
   if (!ORDER_TAGS.includes(tagVal as OrderTag)) {
-    return badRequest("來源標籤無效");
+    return { error: "來源標籤無效" };
   }
 
   if (deliveryMethod !== "pickup" && deliveryMethod !== "delivery") {
-    return badRequest("無效的取貨方式");
+    return { error: "無效的取貨方式" };
   }
 
   let spotId: number | null = null;
   let address: string | null = null;
   if (deliveryMethod === "pickup") {
     const n = Number(pickupSpotId);
-    if (!Number.isInteger(n) || n <= 0) return badRequest("請選擇取貨點");
+    if (!Number.isInteger(n) || n <= 0) return { error: "請選擇取貨點" };
     spotId = n;
   } else {
     address = typeof shippingAddress === "string" ? shippingAddress.trim() : "";
-    if (!address) return badRequest("宅配地址為必填");
+    if (!address) return { error: "宅配地址為必填" };
   }
 
   if (!Array.isArray(items) || items.length === 0) {
-    return badRequest("請至少加入一項商品");
+    return { error: "請至少加入一項商品" };
   }
 
   // 重複 productId 合併數量為單一明細列。
@@ -344,10 +339,10 @@ export function validateCreateOrderBody(
     const pid = Number(productId);
     const qty = Number(quantity);
     if (!Number.isInteger(pid) || pid <= 0) {
-      return badRequest("商品資料格式錯誤");
+      return { error: "商品資料格式錯誤" };
     }
     if (!Number.isInteger(qty) || qty <= 0) {
-      return badRequest("商品數量需為正整數");
+      return { error: "商品數量需為正整數" };
     }
     merged.set(pid, (merged.get(pid) ?? 0) + qty);
   }
@@ -382,6 +377,57 @@ export interface ValidatedUpdateOrderItem {
   quantity: number;
 }
 
+export interface ValidatedBatchOrderAdjustment {
+  productId: number;
+  method: "pickup" | "delivery";
+  routeId: number | null;
+  changes: {
+    orderId: number;
+    orderItemId: number;
+    expectedQuantity: number;
+    newQuantity: number;
+  }[];
+}
+
+/** 缺貨調整只允許減量，並可保留數量為 0 的明細。 */
+export function validateBatchOrderAdjustmentBody(
+  body: unknown,
+): { value: ValidatedBatchOrderAdjustment } | { error: string } {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const productId = Number(b.productId);
+  const method = b.method;
+  if (!Number.isInteger(productId) || productId <= 0) return { error: "商品資料不正確" };
+  if (method !== "pickup" && method !== "delivery") return { error: "訂單群組不正確" };
+  const routeId = method === "pickup" && b.routeId !== null ? Number(b.routeId) : null;
+  if (routeId !== null && (!Number.isInteger(routeId) || routeId <= 0)) {
+    return { error: "路線資料不正確" };
+  }
+  if (!Array.isArray(b.changes) || b.changes.length === 0 || b.changes.length > 1000) {
+    return { error: "請提供 1 至 1000 筆商品調整" };
+  }
+  const seen = new Set<number>();
+  const changes = b.changes.map((raw) => {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    return {
+      orderId: Number(r.orderId),
+      orderItemId: Number(r.orderItemId),
+      expectedQuantity: Number(r.expectedQuantity),
+      newQuantity: Number(r.newQuantity),
+    };
+  });
+  const invalid = changes.some((r) => {
+    const bad = !Number.isInteger(r.orderId) || r.orderId <= 0 ||
+      !Number.isInteger(r.orderItemId) || r.orderItemId <= 0 ||
+      !Number.isInteger(r.expectedQuantity) || r.expectedQuantity <= 0 ||
+      !Number.isInteger(r.newQuantity) || r.newQuantity < 0 ||
+      r.newQuantity >= r.expectedQuantity || seen.has(r.orderItemId);
+    seen.add(r.orderItemId);
+    return bad;
+  });
+  if (invalid) return { error: "商品調整資料不正確，只能將原數量調低至 0 以上" };
+  return { value: { productId, method, routeId, changes } };
+}
+
 /**
  * 驗證後台「修改訂單品項」請求。金額欄位一律忽略（後端依快照/現價計算）。
  * - `items` 必為非空陣列（至少保留一項；清空請改用刪除訂單）。
@@ -390,11 +436,11 @@ export interface ValidatedUpdateOrderItem {
  */
 export function validateUpdateOrderItemsBody(
   body: unknown,
-): { value: { items: ValidatedUpdateOrderItem[] } } | { error: NextResponse } {
+): { value: { items: ValidatedUpdateOrderItem[] } } | { error: string } {
   const { items } = (body ?? {}) as { items?: unknown };
 
   if (!Array.isArray(items) || items.length === 0) {
-    return badRequest("訂單至少需保留一項明細，如需清空請改用刪除訂單");
+    return { error: "訂單至少需保留一項明細，如需清空請改用刪除訂單" };
   }
 
   // 既有明細（依 order_items.id）與新增明細（依 productId）分別合併數量。
@@ -410,7 +456,7 @@ export function validateUpdateOrderItemsBody(
 
     const qty = Number(quantity);
     if (!Number.isInteger(qty) || qty <= 0) {
-      return badRequest("商品數量需為正整數");
+      return { error: "商品數量需為正整數" };
     }
 
     const hasId = id !== undefined && id !== null && String(id) !== "";
@@ -418,16 +464,16 @@ export function validateUpdateOrderItemsBody(
       productId !== undefined && productId !== null && String(productId) !== "";
     // 必須恰有 id 或 productId 其一。
     if (hasId === hasProduct) {
-      return badRequest("明細資料格式錯誤");
+      return { error: "明細資料格式錯誤" };
     }
 
     if (hasId) {
       const n = Number(id);
-      if (!Number.isInteger(n) || n <= 0) return badRequest("明細資料格式錯誤");
+      if (!Number.isInteger(n) || n <= 0) return { error: "明細資料格式錯誤" };
       existingQty.set(n, (existingQty.get(n) ?? 0) + qty);
     } else {
       const n = Number(productId);
-      if (!Number.isInteger(n) || n <= 0) return badRequest("商品資料格式錯誤");
+      if (!Number.isInteger(n) || n <= 0) return { error: "商品資料格式錯誤" };
       newQty.set(n, (newQty.get(n) ?? 0) + qty);
     }
   }

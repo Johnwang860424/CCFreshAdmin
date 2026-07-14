@@ -14,8 +14,13 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - `npm run build` — production build
 - `npm run start` — serve production build
 - `npm run lint` — ESLint (flat config, `eslint.config.mjs`)
+- `npm run typecheck` — `tsc --noEmit`
+- `npm run test` / `npm run test:watch` — Vitest unit tests (colocated `app/**/*.test.ts`, config in `vitest.config.ts`)
+- `npm run check` — lint + typecheck + test (run this before committing)
 
-No test framework is configured.
+## Testing & domain layer
+
+Mirrors the customer app (`../CCFresh`): pure business logic lives in **`app/domain/`** — framework/DB-free modules with colocated `*.test.ts` (`order-assembly`, `route-matrix`, `close-groups`, `stock`, `duplicate-orders`). `app/lib/` keeps SQL/IO and thin wrappers that call into domain functions; `app/lib/orders.ts` re-exports `OrderRow` / `OrderItemRow` / `CloseGroupSummary` from domain so existing import paths keep working. Framework-free lib utilities (`validation.ts`, `promotions.ts`, `csv.ts`, `pickup-code.ts`, `order-export.ts`) also have colocated tests. Validators in `app/lib/validation.ts` return `{ value } | { error: string }` (no `NextResponse`); API routes convert with `badRequest()` from `app/lib/api.ts`. No e2e framework is configured (admin pages sit behind Google OAuth).
 
 ## What this is
 

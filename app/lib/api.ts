@@ -3,6 +3,11 @@ import { auth, isAllowedEmail } from "@/auth";
 
 type RouteHandler<Ctx> = (request: Request, context: Ctx) => Promise<unknown>;
 
+/** 把驗證層（app/lib/validation.ts）回傳的錯誤訊息轉為 400 JSON 回應。 */
+export function badRequest(message: string): NextResponse {
+  return NextResponse.json({ error: message }, { status: 400 });
+}
+
 /**
  * 包住 route handler，把例外處理集中一處：
  * - 執行 handler 前驗證 session 與目前的 email allowlist（API 的共同授權邊界）。

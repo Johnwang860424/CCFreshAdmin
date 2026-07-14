@@ -1,15 +1,6 @@
 "use client";
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-  useContext,
-  createContext,
-  type CSSProperties,
-  type HTMLAttributes,
-} from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Card,
   Table,
@@ -33,7 +24,6 @@ import {
   EditOutlined,
   ReloadOutlined,
   EnvironmentOutlined,
-  HolderOutlined,
   SortAscendingOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -51,10 +41,8 @@ import {
 import {
   arrayMove,
   SortableContext,
-  useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { TAIWAN_LOCATIONS } from "@/app/lib/taiwan-locations";
 import type { PickupSpotRow as PickupSpot } from "@/app/lib/pickup-spots";
 import {
@@ -65,66 +53,9 @@ import {
   deleteJson,
 } from "@/app/lib/api-client";
 import { PageHeader } from "@/app/components/page-header";
+import { DragHandle, SortableRow } from "@/app/components/sortable-table-row";
 
 const { Text } = Typography;
-
-// ── 拖拉排序：dnd-kit + antd Table 自訂列 ──────────────────────────────
-interface RowContextProps {
-  setActivatorNodeRef?: (element: HTMLElement | null) => void;
-  listeners?: Record<string, (event: unknown) => void>;
-}
-const RowContext = createContext<RowContextProps>({});
-
-/** 排序模式下的拖拉把手；只有按住此把手才會觸發拖拉。 */
-function DragHandle() {
-  const { setActivatorNodeRef, listeners } = useContext(RowContext);
-  return (
-    <Button
-      type="text"
-      size="small"
-      icon={<HolderOutlined />}
-      style={{ cursor: "move", touchAction: "none" }}
-      ref={setActivatorNodeRef}
-      {...listeners}
-    />
-  );
-}
-
-/** 可排序的表格列；id 對應 rowKey（自取點 id）。 */
-function SortableRow(
-  props: HTMLAttributes<HTMLTableRowElement> & { "data-row-key": number },
-) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: props["data-row-key"] });
-
-  const style: CSSProperties = {
-    ...props.style,
-    transform: CSS.Translate.toString(transform),
-    transition,
-    ...(isDragging ? { position: "relative", zIndex: 9999 } : {}),
-  };
-
-  const contextValue = useMemo<RowContextProps>(
-    () => ({
-      setActivatorNodeRef,
-      listeners: listeners as RowContextProps["listeners"],
-    }),
-    [setActivatorNodeRef, listeners],
-  );
-
-  return (
-    <RowContext.Provider value={contextValue}>
-      <tr {...props} ref={setNodeRef} style={style} {...attributes} />
-    </RowContext.Provider>
-  );
-}
 
 export default function PickupSpotsPage() {
   const [data, setData] = useState<PickupSpot[]>([]);

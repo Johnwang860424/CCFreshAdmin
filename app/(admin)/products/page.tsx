@@ -1,71 +1,20 @@
 "use client";
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-  useMemo,
-  useContext,
-  createContext,
-  type CSSProperties,
-  type HTMLAttributes,
-} from "react";
-import {
-  Card,
-  Typography,
-  Table,
-  Button,
-  Space,
-  Input,
-  InputNumber,
-  Select,
-  Tag,
-  Modal,
-  Form,
-  Popconfirm,
-  message,
-  Spin,
-  Image,
-  Upload,
-} from "antd";
+import { useState, useEffect, useCallback } from "react";
+import { Card, Typography, Button, Space, Input, message, Spin } from "antd";
 import {
   PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
   SearchOutlined,
   ReloadOutlined,
-  ShoppingOutlined,
-  PictureOutlined,
-  CloseCircleFilled,
-  HolderOutlined,
   SortAscendingOutlined,
 } from "@ant-design/icons";
-import type { ColumnsType } from "antd/es/table";
-import {
-  DndContext,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
-import {
-  arrayMove,
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-  rectSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import {
-  PROMO_STRATEGIES,
-  getPromoStrategy,
-  type PromoConfig,
-} from "@/app/lib/promotions";
+import { arrayMove } from "@dnd-kit/sortable";
+import type { DragEndEvent } from "@dnd-kit/core";
 import type { ProductRow as Product } from "@/app/lib/products";
-import { fetchJson, postJson, putJson, deleteJson } from "@/app/lib/api-client";
+import { fetchJson, putJson, deleteJson } from "@/app/lib/api-client";
 import { PageHeader } from "@/app/components/page-header";
+import { ProductFormModal } from "./components/product-form-modal";
+import { ProductsTable } from "./components/products-table";
 
 const { Text } = Typography;
 
@@ -74,176 +23,15 @@ interface Category {
   name: string;
 }
 
-const promoFieldName = (configKey: string) => `promo_${configKey}`;
-
-/** 單一商品圖片張數上限（對應後端 validateProductImages 的 MAX_PRODUCT_IMAGES）。 */
-const MAX_PRODUCT_IMAGES = 8;
-
-/** 可拖拉排序的圖片縮圖；id 為圖片 URL。第一張即封面。 */
-function SortableThumb({
-  url,
-  index,
-  disabled,
-  onRemove,
-}: {
-  url: string;
-  index: number;
-  disabled: boolean;
-  onRemove: () => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: url });
-
-  const style: CSSProperties = {
-    transform: CSS.Translate.toString(transform),
-    transition,
-    position: "relative",
-    width: 96,
-    height: 96,
-    ...(isDragging ? { zIndex: 9999 } : {}),
-  };
-
-  return (
-    <div ref={setNodeRef} style={style}>
-      <div
-        {...attributes}
-        {...listeners}
-        style={{
-          width: "100%",
-          height: "100%",
-          cursor: disabled ? "not-allowed" : "move",
-          touchAction: "none",
-          border: "1px solid #d9d9d9",
-          borderRadius: 8,
-          overflow: "hidden",
-        }}
-      >
-        <Image
-          src={url}
-          alt="product"
-          preview={false}
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-        />
-      </div>
-      {index === 0 && (
-        <Tag
-          color="blue"
-          style={{
-            position: "absolute",
-            bottom: 2,
-            left: 2,
-            margin: 0,
-            fontSize: 10,
-            lineHeight: "16px",
-            padding: "0 4px",
-          }}
-        >
-          封面
-        </Tag>
-      )}
-      {!disabled && (
-        <CloseCircleFilled
-          style={{
-            position: "absolute",
-            top: -8,
-            right: -8,
-            fontSize: 18,
-            color: "#ff4d4f",
-            background: "#fff",
-            borderRadius: "50%",
-            cursor: "pointer",
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-// ── 拖拉排序：dnd-kit + antd Table 自訂列 ──────────────────────────────
-interface RowContextProps {
-  setActivatorNodeRef?: (element: HTMLElement | null) => void;
-  listeners?: Record<string, (event: unknown) => void>;
-}
-const RowContext = createContext<RowContextProps>({});
-
-/** 排序模式下的拖拉把手；只有按住此把手才會觸發拖拉。 */
-function DragHandle() {
-  const { setActivatorNodeRef, listeners } = useContext(RowContext);
-  return (
-    <Button
-      type="text"
-      size="small"
-      icon={<HolderOutlined />}
-      style={{ cursor: "move", touchAction: "none" }}
-      ref={setActivatorNodeRef}
-      {...listeners}
-    />
-  );
-}
-
-/** 可排序的表格列；id 對應 rowKey（商品 id）。 */
-function SortableRow(
-  props: HTMLAttributes<HTMLTableRowElement> & { "data-row-key": number },
-) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: props["data-row-key"] });
-
-  const style: CSSProperties = {
-    ...props.style,
-    transform: CSS.Translate.toString(transform),
-    transition,
-    ...(isDragging ? { position: "relative", zIndex: 9999 } : {}),
-  };
-
-  const contextValue = useMemo<RowContextProps>(
-    () => ({
-      setActivatorNodeRef,
-      listeners: listeners as RowContextProps["listeners"],
-    }),
-    [setActivatorNodeRef, listeners],
-  );
-
-  return (
-    <RowContext.Provider value={contextValue}>
-      <tr {...props} ref={setNodeRef} style={style} {...attributes} />
-    </RowContext.Provider>
-  );
-}
-
 export default function ProductsPage() {
   const [data, setData] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState(false);
   const [reordering, setReordering] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
-  const [imageUrls, setImageUrls] = useState<string[]>([]);
-  const [imageError, setImageError] = useState("");
-  const uploadedImageUrlsRef = useRef<string[]>([]);
-  const [form] = Form.useForm();
-  const promoType = Form.useWatch("promoType", form) as string | undefined;
-  const selectedStrategy = promoType ? getPromoStrategy(promoType) : undefined;
   const [messageApi, contextHolder] = message.useMessage();
 
   const fetchData = useCallback(async () => {
@@ -270,229 +58,29 @@ export default function ProductsPage() {
     fetchCategories();
   }, [fetchData, fetchCategories]);
 
-  useEffect(() => {
-    if (!modalOpen) return;
-
-    if (editing) {
-      form.setFieldsValue({
-        name: editing.name,
-        price: editing.price,
-        stock: editing.stock ?? undefined,
-        categoryId: editing.categoryId ?? undefined,
-        spec: editing.spec ?? undefined,
-        description: editing.description ?? undefined,
-        promoType: editing.promoType ?? undefined,
-        ...Object.fromEntries(
-          Object.entries(editing.promoConfig ?? {}).map(([k, v]) => [
-            promoFieldName(k),
-            v,
-          ]),
-        ),
-      });
-    } else {
-      form.resetFields();
-    }
-  }, [editing, form, modalOpen]);
-
   const filtered = data.filter((item) => item.name.includes(search));
-  const modalBusy = uploading || saving;
 
   const openModal = (record?: Product) => {
     setEditing(record ?? null);
-    setImageUrls(record?.images ?? []);
-    setImageError("");
-    uploadedImageUrlsRef.current = [];
     setModalOpen(true);
   };
 
   const closeModal = () => {
     setModalOpen(false);
     setEditing(null);
-    setImageUrls([]);
-    setImageError("");
-    uploadedImageUrlsRef.current = [];
-  };
-
-  const deleteUploadedImage = useCallback(
-    (url: string) => deleteJson("/api/upload", { url }),
-    [],
-  );
-
-  const handleUpload = async ({
-    file,
-    onSuccess,
-    onError,
-  }: {
-    file: File | Blob | string;
-    onSuccess?: (body: unknown) => void;
-    onError?: (err: Error | ProgressEvent) => void;
-  }) => {
-    const formData = new FormData();
-    formData.append("file", file as File);
-    setUploading(true);
-    try {
-      const { url } = await fetchJson<{ url: string }>("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      setImageUrls((prev) => [...prev, url]);
-      uploadedImageUrlsRef.current = [...uploadedImageUrlsRef.current, url];
-      setImageError("");
-      onSuccess?.(url);
-    } catch (e) {
-      onError?.(e as Error);
-      messageApi.error("圖片上傳失敗");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  /**
-   * 從集合移除一張圖片。若該圖為本次 session 剛上傳、尚未存檔者，立即刪 Cloudinary
-   * 並移出追蹤，避免存檔前移除造成孤兒；既有（DB）圖則於儲存時由後端差集清理。
-   */
-  const removeImage = async (url: string) => {
-    if (modalBusy) return;
-    setImageUrls((prev) => prev.filter((u) => u !== url));
-    if (uploadedImageUrlsRef.current.includes(url)) {
-      uploadedImageUrlsRef.current = uploadedImageUrlsRef.current.filter(
-        (u) => u !== url,
-      );
-      try {
-        await deleteUploadedImage(url);
-      } catch {
-        // 盡力刪除；失敗不阻擋 UI（孤兒風險極低）。
-      }
-    }
-  };
-
-  const handleImageDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return;
-    setImageUrls((prev) => {
-      const oldIndex = prev.indexOf(active.id as string);
-      const newIndex = prev.indexOf(over.id as string);
-      if (oldIndex < 0 || newIndex < 0) return prev;
-      return arrayMove(prev, oldIndex, newIndex);
-    });
-  };
-
-  const handleSave = async () => {
-    if (uploading) return;
-
-    let values: {
-      name: string;
-      price: string;
-      stock?: number | null;
-      categoryId: number;
-      spec?: string;
-      description?: string;
-      promoType?: string;
-    } & Record<string, unknown>;
-    try {
-      values = await form.validateFields();
-    } catch {
-      return;
-    }
-
-    const priceNum = Number(values.price);
-    const strategy = values.promoType
-      ? getPromoStrategy(values.promoType)
-      : undefined;
-    const promoConfig: PromoConfig | null = strategy
-      ? Object.fromEntries(
-        strategy.fields.map((f) => [
-          f.name,
-          Number(values[promoFieldName(f.name)]),
-        ]),
-      )
-      : null;
-    const promoPayload = {
-      promoType: values.promoType ?? null,
-      promoConfig,
-    };
-
-    if (imageUrls.length === 0) {
-      setImageError("請至少上傳一張商品圖片");
-      messageApi.error("請至少上傳一張商品圖片");
-      return;
-    }
-
-    try {
-      setSaving(true);
-      if (editing) {
-        await putJson(`/api/products/${editing.id}`, {
-          price: priceNum,
-          stock: values.stock ?? null,
-          imageUrls,
-          categoryId: values.categoryId,
-          spec: values.spec,
-          description: values.description,
-          ...promoPayload,
-        });
-        messageApi.success("商品已更新");
-      } else {
-        await postJson("/api/products", {
-          name: values.name,
-          price: priceNum,
-          stock: values.stock ?? null,
-          imageUrls,
-          categoryId: values.categoryId,
-          spec: values.spec,
-          description: values.description,
-          ...promoPayload,
-        });
-        messageApi.success("商品已新增");
-      }
-
-      uploadedImageUrlsRef.current = [];
-      closeModal();
-      await fetchData();
-    } catch (e) {
-      messageApi.error(
-        e instanceof Error ? e.message : editing ? "更新失敗" : "新增失敗",
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleModalCancel = async () => {
-    if (modalBusy) return;
-
-    const uploadedImageUrls = uploadedImageUrlsRef.current;
-    if (uploadedImageUrls.length > 0) {
-      setSaving(true);
-      try {
-        await Promise.all(uploadedImageUrls.map(deleteUploadedImage));
-      } catch {
-        messageApi.error("圖片刪除失敗，請稍後再試");
-        setSaving(false);
-        return;
-      }
-      setSaving(false);
-    }
-
-    closeModal();
   };
 
   const handleDelete = async (id: number) => {
     try {
-      setSaving(true);
       await deleteJson(`/api/products/${id}`);
       messageApi.success("商品已刪除");
       await fetchData();
     } catch (e) {
       messageApi.error(e instanceof Error ? e.message : "刪除失敗");
-    } finally {
-      setSaving(false);
     }
   };
 
-  // 需按住把手移動些微距離才啟動拖拉，避免點擊把手即誤觸。
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-  );
-
+  // 排序模式拖拉結束：樂觀更新列表順序並儲存，失敗回滾。
   const handleDragEnd = async ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
 
@@ -515,145 +103,9 @@ export default function ProductsPage() {
     }
   };
 
-  const dragHandleColumn: ColumnsType<Product>[number] = {
-    title: "排序",
-    key: "sort",
-    width: 64,
-    align: "center",
-    render: () => <DragHandle />,
-  };
-
-  const columns: ColumnsType<Product> = [
-    {
-      title: "圖片",
-      dataIndex: "imageUrl",
-      key: "imageUrl",
-      width: 100,
-      render: (imageUrl: string) =>
-        imageUrl ? (
-          <Image
-            src={imageUrl}
-            alt="product"
-            width={60}
-            height={60}
-            style={{ objectFit: "cover", borderRadius: 4 }}
-          />
-        ) : (
-          <div
-            style={{
-              width: 60,
-              height: 60,
-              background: "#f0f0f0",
-              borderRadius: 4,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <PictureOutlined style={{ color: "#bfbfbf", fontSize: 24 }} />
-          </div>
-        ),
-    },
-    {
-      title: "產品名稱",
-      dataIndex: "name",
-      key: "name",
-      render: (name: string) => (
-        <Space>
-          <ShoppingOutlined style={{ color: "#1677ff" }} />
-          <Text strong>{name}</Text>
-        </Space>
-      ),
-    },
-    {
-      title: "分類",
-      dataIndex: "categoryName",
-      key: "categoryName",
-      width: 120,
-      render: (categoryName: string | null) =>
-        categoryName ? (
-          <Tag color="blue">{categoryName}</Tag>
-        ) : (
-          <Text type="secondary">—</Text>
-        ),
-    },
-    {
-      title: "規格",
-      dataIndex: "spec",
-      key: "spec",
-      width: 120,
-      render: (spec: string | null) =>
-        spec ? <Text>{spec}</Text> : <Text type="secondary">—</Text>,
-    },
-    {
-      title: "價格",
-      dataIndex: "price",
-      key: "price",
-      width: 120,
-      render: (price: number) => <Text>{price}</Text>,
-    },
-    {
-      title: "庫存",
-      dataIndex: "stock",
-      key: "stock",
-      width: 100,
-      render: (stock: number | null) =>
-        stock === null ? (
-          <Text type="secondary">不限量</Text>
-        ) : stock === 0 ? (
-          <Tag color="red">售完</Tag>
-        ) : (
-          <Text>{stock}</Text>
-        ),
-    },
-    {
-      title: "優惠",
-      key: "promo",
-      width: 160,
-      render: (_: unknown, record: Product) =>
-        record.promoSummary ? (
-          <Tag color="red">{record.promoSummary}</Tag>
-        ) : (
-          <Text type="secondary">—</Text>
-        ),
-    },
-    {
-      title: "操作",
-      key: "actions",
-      width: 120,
-      align: "center",
-      fixed: "right",
-      render: (_: unknown, record: Product) => (
-        <Space>
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => openModal(record)}
-          />
-          <Popconfirm
-            title="確定刪除？"
-            description={`將刪除「${record.name}」`}
-            onConfirm={() => handleDelete(record.id)}
-            okText="確定"
-            cancelText="取消"
-          >
-            <Button type="link" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-
-  // 排序模式：把手在前、隱藏「操作」欄，避免拖拉時誤觸編輯/刪除。
-  const sortColumns: ColumnsType<Product> = [
-    dragHandleColumn,
-    ...columns.filter((c) => c.key !== "actions"),
-  ];
-
   return (
     <>
       {contextHolder}
-      <Spin spinning={uploading} fullscreen description="圖片上傳中" />
       <Card classNames={{ body: "p-3 sm:p-6" }}>
         <PageHeader
           title="商品管理"
@@ -709,218 +161,23 @@ export default function ProductsPage() {
         />
 
         <Spin spinning={loading}>
-          {sortMode ? (
-            <DndContext
-              sensors={sensors}
-              onDragEnd={handleDragEnd}
-              modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-              autoScroll={{ threshold: { x: 0, y: 0.05 } }}
-            >
-              <SortableContext
-                items={data.map((i) => i.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                <Table
-                  rowKey="id"
-                  columns={sortColumns}
-                  dataSource={data}
-                  pagination={false}
-                  scroll={{ x: "max-content" }}
-                  components={{ body: { row: SortableRow } }}
-                />
-              </SortableContext>
-            </DndContext>
-          ) : (
-            <Table
-              rowKey="id"
-              columns={columns}
-              dataSource={filtered}
-              pagination={{ defaultPageSize: 10, showSizeChanger: true }}
-              scroll={{ x: "max-content" }}
-            />
-          )}
+          <ProductsTable
+            data={sortMode ? data : filtered}
+            sortMode={sortMode}
+            onEdit={openModal}
+            onDelete={handleDelete}
+            onReorderDragEnd={handleDragEnd}
+          />
         </Spin>
       </Card>
 
-      <Modal
-        title={editing ? "編輯商品" : "新增商品"}
+      <ProductFormModal
         open={modalOpen}
-        onOk={handleSave}
-        onCancel={handleModalCancel}
-        okText="儲存"
-        cancelText="取消"
-        confirmLoading={saving}
-        okButtonProps={{ disabled: modalBusy }}
-        cancelButtonProps={{ disabled: modalBusy }}
-        closable={!modalBusy}
-        mask={{ closable: !modalBusy }}
-        keyboard={!modalBusy}
-        destroyOnHidden
-        width={420}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          style={{ marginTop: 16 }}
-          disabled={modalBusy}
-        >
-          <Form.Item
-            name="name"
-            label="產品名稱"
-            rules={[{ required: true, message: "請輸入產品名稱" }]}
-          >
-            <Input disabled={Boolean(editing)} placeholder="例：無糖豆漿" />
-          </Form.Item>
-
-          <Form.Item
-            name="categoryId"
-            label="分類"
-            rules={[{ required: true, message: "請選擇分類" }]}
-          >
-            <Select
-              showSearch={{
-                optionFilterProp: 'label'
-              }}
-              placeholder="請選擇分類"
-              options={categories.map((c) => ({ label: c.name, value: c.id }))}
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="price"
-            label="價格"
-            rules={[
-              { required: true, message: "請輸入價格" },
-              { pattern: /^\d+$/, message: "價格需為非負整數" },
-            ]}
-          >
-            <Input placeholder="例：50" />
-          </Form.Item>
-
-          <Form.Item
-            name="stock"
-            label="庫存"
-            rules={[
-              {
-                validator: (_, value) => {
-                  if (value === undefined || value === null || value === "") {
-                    return Promise.resolve();
-                  }
-                  const num = Number(value);
-                  if (!Number.isInteger(num) || num < 0) {
-                    return Promise.reject(new Error("庫存需為 0 或正整數"));
-                  }
-                  return Promise.resolve();
-                },
-              },
-            ]}
-          >
-            <InputNumber
-              min={0}
-              precision={0}
-              placeholder="留空＝不限量"
-              style={{ width: "100%" }}
-            />
-          </Form.Item>
-
-          <Form.Item name="promoType" label="優惠方式">
-            <Select
-              allowClear
-              placeholder="無優惠"
-              options={PROMO_STRATEGIES.map((s) => ({
-                label: s.label,
-                value: s.type,
-              }))}
-            />
-          </Form.Item>
-
-          {selectedStrategy &&
-            selectedStrategy.fields.map((field) => (
-              <Form.Item
-                key={field.name}
-                name={promoFieldName(field.name)}
-                label={field.label}
-                tooltip={field.tooltip}
-                rules={[
-                  { required: true, message: `請輸入${field.label}` },
-                  {
-                    validator: (_, value) => {
-                      const num = Number(value);
-                      if (
-                        !Number.isInteger(num) ||
-                        num < field.min ||
-                        num > field.max
-                      ) {
-                        return Promise.reject(
-                          new Error(
-                            `${field.label}需為介於 ${field.min} ~ ${field.max} 的整數`,
-                          ),
-                        );
-                      }
-                      return Promise.resolve();
-                    },
-                  },
-                ]}
-              >
-                <Input placeholder={field.placeholder} />
-              </Form.Item>
-            ))}
-
-          <Form.Item name="spec" label="規格">
-            <Input placeholder="例：500g/包" />
-          </Form.Item>
-
-          <Form.Item name="description" label="說明">
-            <Input.TextArea rows={3} placeholder="商品說明（選填）" />
-          </Form.Item>
-
-          <Form.Item
-            label="商品圖片"
-            required
-            validateStatus={imageError ? "error" : undefined}
-            help={
-              imageError ||
-              `第一張為封面，可拖拉調整順序（最多 ${MAX_PRODUCT_IMAGES} 張）`
-            }
-          >
-            <DndContext
-              sensors={sensors}
-              onDragEnd={handleImageDragEnd}
-              modifiers={[restrictToParentElement]}
-            >
-              <SortableContext items={imageUrls} strategy={rectSortingStrategy}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                  {imageUrls.map((url, index) => (
-                    <SortableThumb
-                      key={url}
-                      url={url}
-                      index={index}
-                      disabled={modalBusy}
-                      onRemove={() => removeImage(url)}
-                    />
-                  ))}
-                  {imageUrls.length < MAX_PRODUCT_IMAGES && (
-                    <Upload
-                      listType="picture-card"
-                      showUploadList={false}
-                      customRequest={handleUpload}
-                      accept="image/*"
-                      disabled={modalBusy}
-                    >
-                      <div>
-                        {uploading ? <Spin size="small" /> : <PlusOutlined />}
-                        <div style={{ marginTop: 8, fontSize: 12 }}>
-                          上傳圖片
-                        </div>
-                      </div>
-                    </Upload>
-                  )}
-                </div>
-              </SortableContext>
-            </DndContext>
-          </Form.Item>
-        </Form>
-      </Modal>
+        editing={editing}
+        categories={categories}
+        onClose={closeModal}
+        onSaved={fetchData}
+      />
     </>
   );
 }
