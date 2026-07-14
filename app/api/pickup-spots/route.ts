@@ -5,7 +5,7 @@ import {
   PickupSpotDuplicateError,
   SpotCodeDuplicateError,
 } from "@/app/lib/pickup-spots";
-import { jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { parseRouteId, parseSpotCode } from "@/app/lib/validation";
 
@@ -25,10 +25,10 @@ export const POST = jsonHandler(async (request) => {
   }
 
   const route = parseRouteId(routeId);
-  if ("error" in route) return route.error;
+  if ("error" in route) return badRequest(route.error);
 
   const spotCode = parseSpotCode(code);
-  if ("error" in spotCode) return spotCode.error;
+  if ("error" in spotCode) return badRequest(spotCode.error);
 
   try {
     await addPickupSpot(city, township, route.value, spotCode.value);

@@ -8,7 +8,7 @@ import {
   countSameNameOrdersInGroup,
   OrderInputError,
 } from "@/app/lib/orders";
-import { jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { validateCreateOrderBody } from "@/app/lib/validation";
 
@@ -44,7 +44,7 @@ export const GET = jsonHandler(async (request) => {
 export const POST = jsonHandler(async (request) => {
   const body = await request.json();
   const parsed = validateCreateOrderBody(body);
-  if ("error" in parsed) return parsed.error;
+  if ("error" in parsed) return badRequest(parsed.error);
 
   // 重複下單警示（兩段式）：同路線分組已有同名訂單且未帶確認旗標時，
   // 先回 409 requiresConfirmation，前端確認後帶 confirmDuplicate: true 重送。

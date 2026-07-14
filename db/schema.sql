@@ -77,7 +77,7 @@ CREATE TABLE order_items (
   product_id   INTEGER REFERENCES products(id) ON DELETE SET NULL,
   product_name TEXT NOT NULL,
   unit_price   INTEGER NOT NULL,                       -- 單品原價快照（未折扣）
-  quantity     INTEGER NOT NULL CHECK (quantity > 0),
+  quantity     INTEGER NOT NULL CHECK (quantity >= 0),
   promo_type   TEXT,                                   -- 下單當下的促銷快照（NULL = 無促銷）
   promo_config JSONB,
   subtotal     INTEGER NOT NULL CHECK (subtotal >= 0)  -- 折扣後的實付小計；不可由 unit_price×quantity 推算

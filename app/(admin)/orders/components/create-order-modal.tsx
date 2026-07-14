@@ -1,0 +1,372 @@
+"use client";
+
+// 新增訂單視窗：自載商品/取貨點清單、即時預估總額、送出（含重複下單兩段式確認）。
+// 成功後以 onCreated(取貨號) 通知頁面（頁面負責關窗、開成功跳窗與刷新列表）。
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  App,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
+  Space,
+  Spin,
+  Tag,
+  Typography,
+} from "antd";
+import { calcLineSubtotal } from "@/app/lib/promotions";
+import type { ProductRow } from "@/app/lib/products";
+import type { PickupSpotRow } from "@/app/lib/pickup-spots";
+import { fetchJson, postJson, ApiError } from "@/app/lib/api-client";
+import { formatPickupCode } from "@/app/lib/pickup-code";
+
+const { Text } = Typography;
+
+/** 來源標籤選項（與後端 ORDER_TAGS 對應）；預設「網站」。 */
+const TAG_OPTIONS = ["網站", "FB", "Line"] as const;
+
+/** 新增訂單表單的明細列。 */
+interface OrderItemFormValue {
+  productId?: number;
+  quantity?: number;
+}
+
+/** 新增訂單表單值。 */
+interface CreateOrderFormValues {
+  customerName: string;
+  phone?: string;
+  tag: string;
+  deliveryMethod: "pickup" | "delivery";
+  pickupSpotId?: number;
+  shippingAddress?: string;
+  note?: string;
+  items: OrderItemFormValue[];
+}
+
+export function CreateOrderModal({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** 建立成功後回呼，帶入取貨號顯示字串（formatPickupCode 的結果）。 */
+  onCreated: (pickupCode: string | null) => void;
+}) {
+  const { modal, message: messageApi } = App.useApp();
+  const [creating, setCreating] = useState(false);
+  const [products, setProducts] = useState<ProductRow[]>([]);
+  const [pickupSpots, setPickupSpots] = useState<PickupSpotRow[]>([]);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [form] = Form.useForm<CreateOrderFormValues>();
+  const watchedMethod = Form.useWatch("deliveryMethod", form);
+  const watchedItems = Form.useWatch("items", form);
+
+  // 每次開窗重載商品與取貨點清單，確保剩餘庫存/售完標示為最新。
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      setDataLoading(true);
+      try {
+        const [prods, spots] = await Promise.all([
+          fetchJson<ProductRow[]>("/api/products"),
+          fetchJson<PickupSpotRow[]>("/api/pickup-spots"),
+        ]);
+        if (cancelled) return;
+        setProducts(prods);
+        setPickupSpots(spots);
+        // 新增訂單時固定列出所有商品，預設皆不選購（數量為 0）。
+        form.setFieldsValue({
+          items: prods.map((product) => ({
+            productId: product.id,
+            quantity: 0,
+          })),
+        });
+      } catch {
+        if (!cancelled) messageApi.error("讀取商品或取貨點清單失敗");
+      } finally {
+        if (!cancelled) setDataLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, form, messageApi]);
+
+  const productById = useMemo(
+    () => new Map(products.map((p) => [p.id, p])),
+    [products],
+  );
+
+  // 依目前表單明細，以共用 calcLineSubtotal 即時估算總額（與後端計算邏輯一致）。
+  const estimatedTotal = useMemo(() => {
+    if (!watchedItems) return 0;
+    return watchedItems.reduce((sum, item) => {
+      const product = item?.productId
+        ? productById.get(item.productId)
+        : undefined;
+      const qty = Number(item?.quantity);
+      if (!product || !Number.isInteger(qty) || qty <= 0) return sum;
+      const promo =
+        product.promoType && product.promoConfig
+          ? { type: product.promoType, config: product.promoConfig }
+          : null;
+      return sum + calcLineSubtotal(promo, product.price, qty);
+    }, 0);
+  }, [watchedItems, productById]);
+
+  const handleCancel = useCallback(() => {
+    form.resetFields();
+    onClose();
+  }, [form, onClose]);
+
+  // 送出新增訂單並執行成功收尾；confirmDuplicate 為重複下單警示確認後的重送旗標。
+  const submitOrder = useCallback(
+    async (values: CreateOrderFormValues, confirmDuplicate?: boolean) => {
+      const items = values.items.filter((item) => Number(item.quantity) > 0);
+      if (items.length === 0) {
+        messageApi.error("請至少選擇一項商品並填入數量");
+        return;
+      }
+      const res = await postJson<{
+        success: boolean;
+        id: number;
+        pickupNumber: number | null;
+        spotCode: string | null;
+      }>("/api/orders", {
+        customerName: values.customerName,
+        phone: values.phone,
+        tag: values.tag,
+        deliveryMethod: values.deliveryMethod,
+        pickupSpotId:
+          values.deliveryMethod === "pickup" ? values.pickupSpotId : null,
+        shippingAddress:
+          values.deliveryMethod === "delivery" ? values.shippingAddress : null,
+        note: values.note,
+        items: items.map((i) => ({
+          productId: i.productId,
+          quantity: i.quantity,
+        })),
+        ...(confirmDuplicate ? { confirmDuplicate: true } : {}),
+      });
+      messageApi.success("訂單已新增");
+      form.resetFields();
+      onCreated(formatPickupCode(res.spotCode, res.pickupNumber));
+    },
+    [form, messageApi, onCreated],
+  );
+
+  const handleCreate = useCallback(async () => {
+    let values: CreateOrderFormValues;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return; // 驗證失敗，antd 已標示欄位
+    }
+    setCreating(true);
+    try {
+      await submitOrder(values);
+    } catch (err) {
+      // 同路線分組已有同名訂單：後端回 409 requiresConfirmation，
+      // 開確認視窗、確認後帶 confirmDuplicate: true 重送；取消則保留表單。
+      const needsConfirm =
+        err instanceof ApiError &&
+        (err.body as { requiresConfirmation?: boolean } | null)
+          ?.requiresConfirmation === true;
+      if (needsConfirm) {
+        modal.confirm({
+          content: "系統偵測到您可能已有訂單，請確認是否為重複下單",
+          okText: "仍要建立",
+          cancelText: "取消",
+          onOk: async () => {
+            try {
+              await submitOrder(values, true);
+            } catch (err2) {
+              messageApi.error(
+                err2 instanceof Error ? err2.message : "新增訂單失敗",
+              );
+            }
+          },
+        });
+      } else {
+        messageApi.error(err instanceof Error ? err.message : "新增訂單失敗");
+      }
+    } finally {
+      setCreating(false);
+    }
+  }, [form, submitOrder, modal, messageApi]);
+
+  return (
+    <Modal
+      title="新增訂單"
+      open={open}
+      onOk={handleCreate}
+      onCancel={handleCancel}
+      okText="建立訂單"
+      cancelText="取消"
+      confirmLoading={creating}
+      width={720}
+      style={{ top: 20 }}
+      destroyOnHidden
+    >
+      <Spin spinning={dataLoading}>
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{
+            tag: "網站",
+            deliveryMethod: "pickup",
+            items: [],
+          }}
+        >
+          <Form.Item
+            label="客戶姓名"
+            name="customerName"
+            rules={[{ required: true, message: "請輸入客戶姓名" }]}
+          >
+            <Input placeholder="客戶姓名" maxLength={100} autoFocus />
+          </Form.Item>
+
+          <Space size="middle" className="w-full" wrap>
+            <Form.Item label="聯絡電話" name="phone">
+              <Input placeholder="選填" />
+            </Form.Item>
+            <Form.Item
+              label="來源"
+              name="tag"
+              rules={[{ required: true }]}
+            >
+              <Select
+                className="w-32"
+                options={TAG_OPTIONS.map((t) => ({ label: t, value: t }))}
+              />
+            </Form.Item>
+            <Form.Item
+              label="取貨方式"
+              name="deliveryMethod"
+              rules={[{ required: true }]}
+            >
+              <Select
+                className="w-32"
+                options={[
+                  { label: "自取", value: "pickup" },
+                  { label: "宅配", value: "delivery" },
+                ]}
+              />
+            </Form.Item>
+          </Space>
+
+          {watchedMethod === "delivery" ? (
+            <Form.Item
+              label="宅配地址"
+              name="shippingAddress"
+              rules={[{ required: true, message: "請輸入宅配地址" }]}
+            >
+              <Input placeholder="收件地址" />
+            </Form.Item>
+          ) : (
+            <>
+              {pickupSpots.length === 0 && !dataLoading && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="目前沒有可用的取貨點，請先於「自取地點」建立後，再新增自取訂單。"
+                />
+              )}
+              <Form.Item
+                label="取貨點"
+                name="pickupSpotId"
+                rules={[{ required: true, message: "請選擇取貨點" }]}
+              >
+                <Select
+                  placeholder="選擇取貨點"
+                  showSearch={{
+                    optionFilterProp: 'label'
+                  }}
+                  options={pickupSpots.map((s) => ({
+                    label: `${s.city} ${s.township}`,
+                    value: s.id,
+                  }))}
+                  notFoundContent="尚無取貨點"
+                />
+              </Form.Item>
+            </>
+          )}
+
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>商品明細</div>
+            {products.length === 0 && !dataLoading ? (
+              <Empty description="尚無商品" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            ) : (
+              products.map((product, index) => (
+                <div
+                  key={product.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 16,
+                    alignItems: "center",
+                    padding: "8px 0",
+                    borderBottom: "1px solid #f0f0f0",
+                  }}
+                >
+                  <div>
+                    <div>
+                      {product.name}
+                      {product.stock === 0 && (
+                        <Tag color="red" style={{ marginLeft: 8 }}>
+                          售完
+                        </Tag>
+                      )}
+                    </div>
+                    <Text type="secondary">
+                      ${product.price}
+                      {product.promoSummary ? ` · ${product.promoSummary}` : ""}
+                      {product.stock !== null && product.stock > 0
+                        ? ` · 剩餘 ${product.stock}`
+                        : ""}
+                    </Text>
+                  </div>
+                  <Form.Item name={["items", index, "productId"]} hidden>
+                    <InputNumber />
+                  </Form.Item>
+                  <Form.Item
+                    name={["items", index, "quantity"]}
+                    rules={[{ required: true, message: "請輸入數量" }]}
+                    style={{ marginBottom: 0 }}
+                  >
+                    <InputNumber
+                      min={0}
+                      precision={0}
+                      disabled={product.stock === 0}
+                      aria-label={`${product.name} 數量`}
+                      style={{ width: 80 }}
+                    />
+                  </Form.Item>
+                </div>
+              ))
+            )}
+          </div>
+
+          <Form.Item label="備註" name="note" style={{ marginTop: 16 }}>
+            <Input.TextArea rows={2} placeholder="選填" />
+          </Form.Item>
+
+          <div style={{ textAlign: "right" }}>
+            <Text type="secondary" style={{ marginRight: 8 }}>
+              預估總額
+            </Text>
+            <Text strong style={{ fontSize: 18, color: "#cf1322" }}>
+              ${estimatedTotal}
+            </Text>
+          </div>
+        </Form>
+      </Spin>
+    </Modal>
+  );
+}

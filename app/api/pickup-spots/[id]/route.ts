@@ -10,7 +10,7 @@ import {
   PickupSpotDuplicateError,
   SpotCodeDuplicateError,
 } from "@/app/lib/pickup-spots";
-import { jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { parseId, parseRouteId, parseSpotCode } from "@/app/lib/validation";
 
@@ -19,7 +19,7 @@ type Params = { params: Promise<{ id: string }> };
 export const PUT = jsonHandler<Params>(async (request, { params }) => {
   const { id: idStr } = await params;
   const parsed = parseId(idStr);
-  if ("error" in parsed) return parsed.error;
+  if ("error" in parsed) return badRequest(parsed.error);
   const { id } = parsed;
 
   // 接受 township（必填）與選用 routeId / code；任何傳入的 city 一律忽略（所屬縣市不可更改）。
@@ -40,11 +40,11 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
 
   const hasRoute = "routeId" in body;
   const route = parseRouteId(body.routeId);
-  if (hasRoute && "error" in route) return route.error;
+  if (hasRoute && "error" in route) return badRequest(route.error);
 
   const hasCode = "code" in body;
   const spotCode = parseSpotCode(body.code);
-  if (hasCode && "error" in spotCode) return spotCode.error;
+  if (hasCode && "error" in spotCode) return badRequest(spotCode.error);
 
   try {
     if (hasCode && "value" in spotCode) {
@@ -90,7 +90,7 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
 export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
   const { id: idStr } = await params;
   const parsed = parseId(idStr);
-  if ("error" in parsed) return parsed.error;
+  if ("error" in parsed) return badRequest(parsed.error);
   const { id } = parsed;
 
   try {

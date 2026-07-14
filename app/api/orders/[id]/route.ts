@@ -4,7 +4,7 @@ import {
   deleteOrder,
   OrderInputError,
 } from "@/app/lib/orders";
-import { jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { parseId, validateUpdateOrderItemsBody } from "@/app/lib/validation";
 
@@ -15,11 +15,11 @@ type Params = { params: Promise<{ id: string }> };
 export const PUT = jsonHandler<Params>(async (request, { params }) => {
   const { id: idStr } = await params;
   const parsedId = parseId(idStr);
-  if ("error" in parsedId) return parsedId.error;
+  if ("error" in parsedId) return badRequest(parsedId.error);
 
   const body = await request.json().catch(() => ({}));
   const parsed = validateUpdateOrderItemsBody(body);
-  if ("error" in parsed) return parsed.error;
+  if ("error" in parsed) return badRequest(parsed.error);
 
   try {
     const order = await updateOrderItems(parsedId.id, parsed.value.items);
@@ -44,7 +44,7 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
 export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
   const { id: idStr } = await params;
   const parsedId = parseId(idStr);
-  if ("error" in parsedId) return parsedId.error;
+  if ("error" in parsedId) return badRequest(parsedId.error);
 
   const deleted = await deleteOrder(parsedId.id);
   if (!deleted) {
