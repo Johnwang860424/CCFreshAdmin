@@ -138,12 +138,14 @@ export function OrderItemsGrid({
                     <td key={row.key} style={cellStyle(row)}>
                       <Form.Item
                         name={["items", row.index, "quantity"]}
-                        rules={[{ required: true, message: "請輸入數量" }]}
                         style={{ marginBottom: 0 }}
                       >
                         <InputNumber
                           min={0}
                           precision={0}
+                          formatter={(value) =>
+                            Number(value) === 0 ? "" : String(value ?? "")
+                          }
                           controls={false}
                           variant="borderless"
                           disabled={row.inputDisabled}
