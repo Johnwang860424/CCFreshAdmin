@@ -207,6 +207,7 @@ export function ProductsTable({
           strategy={verticalListSortingStrategy}
         >
           <Table
+            sticky
             rowKey="id"
             columns={sortColumns}
             dataSource={data}
@@ -221,6 +222,7 @@ export function ProductsTable({
 
   return (
     <Table
+      sticky
       rowKey="id"
       columns={columns}
       dataSource={data}

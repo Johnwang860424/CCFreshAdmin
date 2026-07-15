@@ -73,6 +73,7 @@ function expandedRowRender(record: Order) {
       </Descriptions>
       {record.items.length > 0 ? (
         <Table
+          sticky
           rowKey="id"
           dataSource={record.items}
           pagination={false}
@@ -274,6 +275,7 @@ export function OrdersTable({
 
   return (
     <Table
+      sticky
       rowKey="id"
       columns={columns}
       dataSource={data}

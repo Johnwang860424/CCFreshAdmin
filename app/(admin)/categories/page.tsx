@@ -205,6 +205,7 @@ export default function CategoriesPage() {
 
         <Spin spinning={loading}>
           <Table
+            sticky
             rowKey="id"
             columns={columns}
             dataSource={filtered}
