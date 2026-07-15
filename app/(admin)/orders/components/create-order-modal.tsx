@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   App,
-  Empty,
   Form,
   Input,
   InputNumber,
@@ -14,7 +13,6 @@ import {
   Select,
   Space,
   Spin,
-  Tag,
   Typography,
 } from "antd";
 import { calcLineSubtotal } from "@/app/lib/promotions";
@@ -22,6 +20,7 @@ import type { ProductRow } from "@/app/lib/products";
 import type { PickupSpotRow } from "@/app/lib/pickup-spots";
 import { fetchJson, postJson, ApiError } from "@/app/lib/api-client";
 import { formatPickupCode } from "@/app/lib/pickup-code";
+import { OrderItemsGrid } from "./order-items-grid";
 
 const { Text } = Typography;
 
@@ -209,7 +208,7 @@ export function CreateOrderModal({
       okText="建立訂單"
       cancelText="取消"
       confirmLoading={creating}
-      width={720}
+      width="96vw"
       style={{ top: 20 }}
       destroyOnHidden
     >
@@ -298,60 +297,22 @@ export function CreateOrderModal({
             </>
           )}
 
-          <div>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>商品明細</div>
-            {products.length === 0 && !dataLoading ? (
-              <Empty description="尚無商品" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            ) : (
-              products.map((product, index) => (
-                <div
-                  key={product.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 16,
-                    alignItems: "center",
-                    padding: "8px 0",
-                    borderBottom: "1px solid #f0f0f0",
-                  }}
-                >
-                  <div>
-                    <div>
-                      {product.name}
-                      {product.stock === 0 && (
-                        <Tag color="red" style={{ marginLeft: 8 }}>
-                          售完
-                        </Tag>
-                      )}
-                    </div>
-                    <Text type="secondary">
-                      ${product.price}
-                      {product.promoSummary ? ` · ${product.promoSummary}` : ""}
-                      {product.stock !== null && product.stock > 0
-                        ? ` · 剩餘 ${product.stock}`
-                        : ""}
-                    </Text>
-                  </div>
-                  <Form.Item name={["items", index, "productId"]} hidden>
-                    <InputNumber />
-                  </Form.Item>
-                  <Form.Item
-                    name={["items", index, "quantity"]}
-                    rules={[{ required: true, message: "請輸入數量" }]}
-                    style={{ marginBottom: 0 }}
-                  >
-                    <InputNumber
-                      min={0}
-                      precision={0}
-                      disabled={product.stock === 0}
-                      aria-label={`${product.name} 數量`}
-                      style={{ width: 80 }}
-                    />
-                  </Form.Item>
-                </div>
-              ))
-            )}
-          </div>
+          <OrderItemsGrid
+            loading={dataLoading}
+            rows={products.map((product, index) => ({
+              key: product.id,
+              index,
+              code: product.code,
+              name: product.name,
+              soldOut: product.stock === 0,
+              inputDisabled: product.stock === 0,
+              hiddenFields: (
+                <Form.Item name={["items", index, "productId"]} hidden>
+                  <InputNumber />
+                </Form.Item>
+              ),
+            }))}
+          />
 
           <Form.Item label="備註" name="note" style={{ marginTop: 16 }}>
             <Input.TextArea rows={2} placeholder="選填" />
