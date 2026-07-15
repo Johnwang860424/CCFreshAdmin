@@ -161,15 +161,17 @@ describe("validateProductBody", () => {
     expect("value" in parsed && parsed.value.name).toBe("");
   });
 
-  it("價格須為非負整數（空、負數、小數皆拒絕）", () => {
-    for (const price of ["", -1, 1.5, "abc"]) {
+  it("價格須為正整數（空、負數、零、小數皆拒絕）", () => {
+    for (const price of ["", -1, 0, 1.5, "abc"]) {
       expect(
         validateProductBody({ ...base, price }, { requireName: true }),
-      ).toEqual({ error: "商品名稱和有效價格（非負整數）為必填欄位" });
+      ).toEqual({ error: "商品名稱和有效價格（正整數）為必填欄位" });
     }
-    expect(
-      validateProductBody({ code: "M01", price: -1, categoryId: 1 }, { requireName: false }),
-    ).toEqual({ error: "有效價格（非負整數）為必填欄位" });
+    for (const price of [-1, 0]) {
+      expect(
+        validateProductBody({ code: "M01", price, categoryId: 1 }, { requireName: false }),
+      ).toEqual({ error: "有效價格（正整數）為必填欄位" });
+    }
   });
 
   it("名稱/規格/說明長度上限", () => {

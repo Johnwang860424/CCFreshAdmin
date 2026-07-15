@@ -26,6 +26,24 @@ const { Text } = Typography;
 
 /** 來源標籤選項（與後端 ORDER_TAGS 對應）；預設「網站」。 */
 const TAG_OPTIONS = ["網站", "FB", "Line"] as const;
+const ORDER_SOURCE_STORAGE_KEY = "orders:create:last-source";
+
+function getCachedOrderSource(): (typeof TAG_OPTIONS)[number] {
+  try {
+    const cachedSource = window.localStorage.getItem(ORDER_SOURCE_STORAGE_KEY);
+    return TAG_OPTIONS.find((source) => source === cachedSource) ?? TAG_OPTIONS[0];
+  } catch {
+    return TAG_OPTIONS[0];
+  }
+}
+
+function cacheOrderSource(source: string) {
+  try {
+    window.localStorage.setItem(ORDER_SOURCE_STORAGE_KEY, source);
+  } catch {
+    // localStorage may be unavailable (for example, in a restricted browser mode).
+  }
+}
 
 /** 新增訂單表單的明細列。 */
 interface OrderItemFormValue {
@@ -67,6 +85,7 @@ export function CreateOrderModal({
   // 每次開窗重載商品與取貨點清單，確保剩餘庫存/售完標示為最新。
   useEffect(() => {
     if (!open) return;
+    form.setFieldValue("tag", getCachedOrderSource());
     let cancelled = false;
     (async () => {
       setDataLoading(true);
@@ -242,6 +261,7 @@ export function CreateOrderModal({
               <Select
                 className="w-32"
                 options={TAG_OPTIONS.map((t) => ({ label: t, value: t }))}
+                onChange={cacheOrderSource}
               />
             </Form.Item>
             <Form.Item

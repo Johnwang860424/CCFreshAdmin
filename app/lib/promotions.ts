@@ -5,7 +5,7 @@
 export type PromoConfig = Record<string, number>;
 
 /** 表單欄位中介資料：前端依此動態渲染輸入欄、後端據此做通用驗證。 */
-export interface PromoField {
+interface PromoField {
   name: string; // config 的鍵
   label: string;
   min: number;

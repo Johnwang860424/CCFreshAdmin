@@ -191,7 +191,7 @@ export async function getDeliveryOrders(): Promise<OrderRow[]> {
 }
 
 /** 訂單管理篩選下拉資料：有自取訂單的路線、是否有未分路線訂單、是否有宅配訂單。 */
-export interface OrderRouteOptions {
+interface OrderRouteOptions {
   routes: { id: number; name: string }[];
   hasUnassigned: boolean;
   hasDelivery: boolean;
