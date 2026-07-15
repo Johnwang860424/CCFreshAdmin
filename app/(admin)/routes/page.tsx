@@ -334,6 +334,7 @@ export default function RoutesPage() {
 
         <Spin spinning={loading}>
           <Table
+            sticky
             rowKey="key"
             columns={columns}
             dataSource={tableRows}

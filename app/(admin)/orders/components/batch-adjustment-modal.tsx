@@ -235,6 +235,7 @@ export function BatchAdjustmentModal({
       )}
       {productId !== undefined && (
         <Table
+          sticky
           rowKey="key"
           size="small"
           columns={columns}

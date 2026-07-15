@@ -221,6 +221,7 @@ export default function OrderSummaryPage() {
         ) : (
           <Spin spinning={loading}>
             <Table
+              sticky
               rowKey="pickupSpotId"
               columns={columns}
               dataSource={matrix?.rows ?? []}

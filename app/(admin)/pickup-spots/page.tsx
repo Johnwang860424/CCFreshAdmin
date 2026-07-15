@@ -437,6 +437,7 @@ export default function PickupSpotsPage() {
                   strategy={verticalListSortingStrategy}
                 >
                   <Table
+                    sticky
                     rowKey="id"
                     columns={sortColumns}
                     dataSource={spotsInActiveTab}
@@ -449,6 +450,7 @@ export default function PickupSpotsPage() {
             </div>
           ) : (
             <Table
+              sticky
               rowKey="id"
               columns={baseColumns}
               dataSource={spotsInActiveTab}
