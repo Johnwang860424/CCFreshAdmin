@@ -5,14 +5,14 @@ import {
   PickupSpotDuplicateError,
   SpotCodeDuplicateError,
 } from "@/app/lib/pickup-spots";
-import { badRequest, jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler, readJson } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { parseRouteId, parseSpotCode } from "@/app/lib/validation";
 
 export const GET = jsonHandler(getPickupSpots, "無法讀取自取地點資料");
 
 export const POST = jsonHandler(async (request) => {
-  const body = await request.json();
+  const body = await readJson(request);
   const { city, township, routeId, code } = body as {
     city: string;
     township: string;

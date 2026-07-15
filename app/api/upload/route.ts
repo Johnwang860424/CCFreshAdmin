@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cloudinary, deleteCloudinaryImage } from "@/app/lib/cloudinary";
-import { jsonHandler } from "@/app/lib/api";
+import { jsonHandler, readJson } from "@/app/lib/api";
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
@@ -78,7 +78,7 @@ export const POST = jsonHandler(async (request) => {
 }, "圖片上傳失敗");
 
 export const DELETE = jsonHandler(async (request) => {
-  const { url } = (await request.json()) as { url?: string };
+  const { url } = (await readJson(request)) as { url?: string };
   if (!url) {
     return NextResponse.json({ error: "未提供圖片網址" }, { status: 400 });
   }

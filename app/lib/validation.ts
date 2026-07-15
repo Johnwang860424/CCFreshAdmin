@@ -1,6 +1,7 @@
 // 請求驗證工具：框架無關（不依賴 next / DOM），失敗回傳 { error: string }，
 // 由 route 層以 badRequest()（app/lib/api.ts）轉為 400 回應。
 import { validatePromo, type PromoConfig } from "@/app/lib/promotions";
+import { MAX_PRODUCT_IMAGES } from "@/app/lib/product-constants";
 
 /** 後端文字欄位的最大長度限制，避免超長字串造成 DB 壓力。 */
 export const MAX_LEN = {
@@ -54,20 +55,20 @@ export function parseSpotCode(
  * 驗證商品排序請求：`ids` 須為非空、皆正整數、不重複的陣列。
  * 回傳已驗證的 id 陣列（代表期望的由前到後完整順序）。
  */
+function validateUniquePositiveIds(
+  ids: unknown,
+  error: string,
+): { value: number[] } | { error: string } {
+  if (!Array.isArray(ids) || ids.length === 0) return { error };
+  const valid = ids.every((id) => Number.isInteger(id) && id > 0);
+  if (!valid || new Set(ids).size !== ids.length) return { error };
+  return { value: ids as number[] };
+}
 export function validateReorderBody(
   body: unknown,
 ): { value: number[] } | { error: string } {
   const { ids } = (body ?? {}) as { ids?: unknown };
-
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return { error: "排序資料格式錯誤" };
-  }
-  const allValid = ids.every((id) => Number.isInteger(id) && (id as number) > 0);
-  if (!allValid || new Set(ids).size !== ids.length) {
-    return { error: "排序資料格式錯誤" };
-  }
-
-  return { value: ids as number[] };
+  return validateUniquePositiveIds(ids, "排序資料格式錯誤");
 }
 
 /**
@@ -79,19 +80,11 @@ export function validatePickupReorderBody(
   body: unknown,
 ): { value: { city: string; ids: number[] } } | { error: string } {
   const { city, ids } = (body ?? {}) as { city?: unknown; ids?: unknown };
-
-  if (typeof city !== "string" || city.trim() === "") {
-    return { error: "排序資料格式錯誤" };
-  }
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return { error: "排序資料格式錯誤" };
-  }
-  const allValid = ids.every((id) => Number.isInteger(id) && (id as number) > 0);
-  if (!allValid || new Set(ids).size !== ids.length) {
-    return { error: "排序資料格式錯誤" };
-  }
-
-  return { value: { city, ids: ids as number[] } };
+  const error = "排序資料格式錯誤";
+  if (typeof city !== "string" || city.trim() === "") return { error };
+  const parsedIds = validateUniquePositiveIds(ids, error);
+  if ("error" in parsedIds) return parsedIds;
+  return { value: { city: city.trim(), ids: parsedIds.value } };
 }
 
 /**
@@ -102,20 +95,11 @@ export function validateOrderIdsBody(
   body: unknown,
 ): { value: number[] } | { error: string } {
   const { ids } = (body ?? {}) as { ids?: unknown };
-
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return { error: "選取資料格式錯誤" };
-  }
-  const allValid = ids.every((id) => Number.isInteger(id) && (id as number) > 0);
-  if (!allValid || new Set(ids).size !== ids.length) {
-    return { error: "選取資料格式錯誤" };
-  }
-
-  return { value: ids as number[] };
+  return validateUniquePositiveIds(ids, "選取資料格式錯誤");
 }
 
 /** 單一商品的圖片張數上限（見 spec FR-011）。 */
-export const MAX_PRODUCT_IMAGES = 8;
+export { MAX_PRODUCT_IMAGES };
 
 /**
  * 驗證商品圖片集合：`imageUrls` 須為 1–8 個非空字串的陣列（有序，index 0 為封面）。

@@ -8,7 +8,7 @@ import {
   countSameNameOrdersInGroup,
   OrderInputError,
 } from "@/app/lib/orders";
-import { badRequest, jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler, readJson } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { validateCreateOrderBody } from "@/app/lib/validation";
 
@@ -42,7 +42,7 @@ export const GET = jsonHandler(async (request) => {
 }, "無法讀取訂單資料");
 
 export const POST = jsonHandler(async (request) => {
-  const body = await request.json();
+  const body = await readJson(request);
   const parsed = validateCreateOrderBody(body);
   if ("error" in parsed) return badRequest(parsed.error);
 

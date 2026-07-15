@@ -10,7 +10,7 @@ import {
   PickupSpotDuplicateError,
   SpotCodeDuplicateError,
 } from "@/app/lib/pickup-spots";
-import { badRequest, jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler, readJson } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { parseId, parseRouteId, parseSpotCode } from "@/app/lib/validation";
 
@@ -27,7 +27,7 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
   //   確認（兩段式：先回 409 requiresConfirmation，前端確認後重送）。
   // - 帶 routeId（路線管理頁）：更新地點與所屬路線；站點帶著代碼移入已有同碼站的路線時，
   //   由同路線唯一鍵擋下回 409（SpotCodeDuplicateError）。
-  const body = (await request.json()) as {
+  const body = (await readJson(request)) as {
     township?: string;
     routeId?: number | null;
     code?: string;
