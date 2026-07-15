@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Alert, App, InputNumber, Modal, Select, Space, Table, Tag, Typography } from "antd";
+import { limitDigitsOnly, selectAllOnFocus } from "@/app/lib/dom-utils";
 import type { ColumnsType } from "antd/es/table";
 import type { OrderItemRow, OrderRow } from "@/app/lib/orders";
 import { postJson } from "@/app/lib/api-client";
@@ -10,7 +11,7 @@ import { formatPickupCode } from "@/app/lib/pickup-code";
 
 const { Text } = Typography;
 
-export interface BatchAdjustmentScope {
+interface BatchAdjustmentScope {
   method: "pickup" | "delivery";
   routeId: number | null;
 }
@@ -168,6 +169,8 @@ export function BatchAdjustmentModal({
               [row.item.id]: typeof value === "number" ? value : row.item.quantity,
             }))
           }
+          onFocus={selectAllOnFocus}
+          onKeyDown={limitDigitsOnly}
         />
       ),
     },

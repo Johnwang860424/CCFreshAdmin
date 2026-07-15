@@ -2,7 +2,7 @@
 // 與後端 countSameNameOrdersInGroup（app/lib/orders.ts）採同一語意：僅比對姓名，電話不比對。
 
 /** 判定所需的最小訂單形狀（訂單管理頁的 Order 與 OrderRow 皆符合）。 */
-export interface NamedOrder {
+interface NamedOrder {
   customerName: string;
 }
 

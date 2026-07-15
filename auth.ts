@@ -11,7 +11,7 @@ export function isAllowedEmail(email: string | null | undefined): boolean {
   return allowedEmails.includes(email.trim().toLowerCase());
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+export const { handlers, auth } = NextAuth({
   session: { strategy: "jwt" },
   providers: [Google],
   pages: {

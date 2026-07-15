@@ -429,7 +429,7 @@ export function ProductFormModal({
             label="價格"
             rules={[
               { required: true, message: "請輸入價格" },
-              { pattern: /^\d+$/, message: "價格需為非負整數" },
+              { pattern: /^[1-9]\d*$/, message: "價格需為正整數" },
             ]}
           >
             <Input placeholder="例：50" />

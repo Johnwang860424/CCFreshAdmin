@@ -144,7 +144,7 @@ export function validateProductImages(
  * 已驗證、可直接寫入 DB 的商品非圖片欄位（name 僅在新增時存在）。
  * 圖片集合另由 validateProductImages 驗證，不在此結構內。
  */
-export interface ValidatedProduct {
+interface ValidatedProduct {
   code: string;
   name: string;
   price: number;
@@ -198,19 +198,19 @@ export function validateProductBody(
 
   const priceNum = Number(price);
   const priceValid =
-    String(price).trim() !== "" && Number.isInteger(priceNum) && priceNum >= 0;
+    String(price).trim() !== "" && Number.isInteger(priceNum) && priceNum > 0;
 
   let nameVal = "";
   if (requireName) {
     nameVal = name?.trim() ?? "";
     if (!nameVal || !priceValid) {
-      return { error: "商品名稱和有效價格（非負整數）為必填欄位" };
+      return { error: "商品名稱和有效價格（正整數）為必填欄位" };
     }
     if (nameVal.length > MAX_LEN.name) {
       return { error: `商品名稱不可超過 ${MAX_LEN.name} 字` };
     }
   } else if (!priceValid) {
-    return { error: "有效價格（非負整數）為必填欄位" };
+    return { error: "有效價格（正整數）為必填欄位" };
   }
 
   if (spec && spec.length > MAX_LEN.spec) {
@@ -256,7 +256,7 @@ export function validateProductBody(
 }
 
 /** 訂單來源標籤允許值；未指定時預設「網站」（顧客端外部訂單亦套此預設）。 */
-export const ORDER_TAGS = ["網站", "FB", "Line"] as const;
+const ORDER_TAGS = ["網站", "FB", "Line"] as const;
 export type OrderTag = (typeof ORDER_TAGS)[number];
 
 /** 已驗證的訂單明細項（金額由後端計算，不取前端值）。 */

@@ -6,9 +6,10 @@
 // 搜尋框只以 CSS 隱藏不符合的欄（欄保持掛載，表單值/驗證不受過濾影響）。
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { ConfigProvider, Empty, Form, Input, InputNumber } from "antd";
+import { limitDigitsOnly, selectAllOnFocus } from "@/app/lib/dom-utils";
 
 /** 商品明細表格的單欄描述（表單值仍由各視窗的 items 陣列持有）。 */
-export interface OrderItemsGridRow {
+interface OrderItemsGridRow {
   key: string | number;
   /** 對應表單 items 陣列的索引（Form.Item name path 用）。 */
   index: number;
@@ -148,6 +149,8 @@ export function OrderItemsGrid({
                           disabled={row.inputDisabled}
                           aria-label={`${row.name} 數量`}
                           style={{ width: 28 }}
+                          onFocus={selectAllOnFocus}
+                          onKeyDown={limitDigitsOnly}
                         />
                       </Form.Item>
                     </td>

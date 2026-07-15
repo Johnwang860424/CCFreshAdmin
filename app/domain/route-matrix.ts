@@ -2,7 +2,7 @@
 // SQL 聚合查詢在 app/lib/orders.ts；此處只負責把聚合列轉成「取貨點 × 商品」矩陣。
 
 /** pivot 結果：欄（商品）、列（取貨點）與每商品總量。 */
-export interface RouteMatrixPivot {
+interface RouteMatrixPivot {
   /** 欄位：範圍內訂單出現過的所有商品名稱（依 products.sort_order，次序同則依名稱 zh-Hant） */
   products: string[];
   /** 列：每個取貨點一筆，含各商品數量（保留輸入列的取貨點順序） */
