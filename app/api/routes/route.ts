@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { getRoutes, addRoute } from "@/app/lib/routes";
-import { jsonHandler } from "@/app/lib/api";
+import { jsonHandler, readJson } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { MAX_LEN } from "@/app/lib/validation";
 
 export const GET = jsonHandler(getRoutes, "無法讀取路線資料");
 
 export const POST = jsonHandler(async (request) => {
-  const body = await request.json();
+  const body = await readJson(request);
   const { name } = body as { name: string };
 
   const nameVal = name?.trim();

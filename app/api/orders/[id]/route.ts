@@ -4,7 +4,7 @@ import {
   deleteOrder,
   OrderInputError,
 } from "@/app/lib/orders";
-import { badRequest, jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler, readJson } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { parseId, validateUpdateOrderItemsBody } from "@/app/lib/validation";
 
@@ -17,7 +17,7 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
   const parsedId = parseId(idStr);
   if ("error" in parsedId) return badRequest(parsedId.error);
 
-  const body = await request.json().catch(() => ({}));
+  const body = await readJson(request);
   const parsed = validateUpdateOrderItemsBody(body);
   if ("error" in parsed) return badRequest(parsed.error);
 

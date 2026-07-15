@@ -5,7 +5,7 @@ import {
   deleteOrdersByGroup,
   type OrderRow,
 } from "@/app/lib/orders";
-import { jsonHandler } from "@/app/lib/api";
+import { jsonHandler, readJson } from "@/app/lib/api";
 import { buildOrdersWorkbook } from "@/app/lib/order-export";
 import { safeFilename, taipeiDateStamp } from "@/app/lib/csv";
 
@@ -34,7 +34,7 @@ export const GET = jsonHandler(async () => {
 // 匯出 Excel：僅下載該分組的訂單，不刪除任何資料，可重複匯出（與出貨為兩個獨立動作）。
 // 依「縣市」分成不同工作表（tab），tab 名稱即縣市；宅配、無取貨點者另成一頁。
 export const POST = jsonHandler(async (request) => {
-  const body = (await request.json().catch(() => ({}))) as GroupBody;
+  const body = (await readJson(request)) as GroupBody;
   const allOrders = await getOrders();
   const orders = filterGroup(allOrders, body);
 
@@ -63,7 +63,7 @@ export const POST = jsonHandler(async (request) => {
 
 // 出貨：永久清除該分組的訂單，不下載檔案（與匯出為兩個獨立動作）。
 export const DELETE = jsonHandler(async (request) => {
-  const body = (await request.json().catch(() => ({}))) as GroupBody;
+  const body = (await readJson(request)) as GroupBody;
   await deleteOrdersByGroup(body.method ?? "pickup", body.routeId ?? null);
   return { success: true };
 }, "清除訂單失敗");

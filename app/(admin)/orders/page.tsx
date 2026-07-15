@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { Key } from "react";
 import {
   Card,
@@ -25,15 +25,10 @@ import {
   CarOutlined,
 } from "@ant-design/icons";
 import type { OrderRow as Order } from "@/app/lib/orders";
-import { fetchJson, deleteJson, downloadBlob } from "@/app/lib/api-client";
+import { deleteJson, downloadBlob } from "@/app/lib/api-client";
 import { safeFilename, taipeiDateStamp } from "@/app/lib/csv";
-import { formatPickupCode } from "@/app/lib/pickup-code";
-import {
-  orderKey,
-  duplicateNameKeys,
-  countDuplicateOrders,
-  sortDuplicatesAdjacent,
-} from "@/app/domain/duplicate-orders";
+import { useOrdersData, DELIVERY, UNASSIGNED } from "./components/use-orders-data";
+import { useOrderView } from "./components/use-order-view";
 import { PageHeader } from "@/app/components/page-header";
 import { CreateOrderModal } from "./components/create-order-modal";
 import { EditOrderModal } from "./components/edit-order-modal";
@@ -45,21 +40,26 @@ import { BatchAdjustmentModal } from "./components/batch-adjustment-modal";
 const { Text } = Typography;
 
 /** 路線篩選下拉的特殊值：宅配（無取貨點/路線）、未分路線（取貨點未指定路線）。 */
-const DELIVERY = "__delivery__";
-const UNASSIGNED = "unassigned";
-
 export default function OrdersPage() {
-  const [routes, setRoutes] = useState<{ id: number; name: string }[]>([]);
-  const [hasUnassigned, setHasUnassigned] = useState(false);
-  const [hasDelivery, setHasDelivery] = useState(false);
-  const [routesLoading, setRoutesLoading] = useState(true);
-  const [selected, setSelected] = useState<string | undefined>();
-  const [data, setData] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   // 只看重複下訂：切換路線不重設（判定隨 data 重算，正確性不受影響）。
   const [dupOnly, setDupOnly] = useState(false);
   const { modal, message: messageApi } = App.useApp();
+  const reportLoadError = useCallback(
+    (text: string) => messageApi.error(text),
+    [messageApi],
+  );
+  const {
+    routes,
+    hasUnassigned,
+    hasDelivery,
+    routesLoading,
+    selected,
+    setSelected,
+    data,
+    loading,
+    refresh,
+  } = useOrdersData(reportLoadError);
 
   // 新增訂單視窗與成功跳窗狀態（表單與清單載入由 CreateOrderModal 自理）。
   const [createOpen, setCreateOpen] = useState(false);
@@ -77,115 +77,17 @@ export default function OrdersPage() {
   const [batchAdjustmentOpen, setBatchAdjustmentOpen] = useState(false);
 
   // 進到畫面時僅取得有訂單的路線清單（含未分路線/宅配旗標），不載入全部訂單。
-  const fetchRouteOptions = useCallback(async () => {
-    setRoutesLoading(true);
-    try {
-      const data = await fetchJson<{
-        routes: { id: number; name: string }[];
-        hasUnassigned: boolean;
-        hasDelivery: boolean;
-      }>("/api/orders");
-      setRoutes(data.routes);
-      setHasUnassigned(data.hasUnassigned);
-      setHasDelivery(data.hasDelivery);
-    } catch {
-      messageApi.error("讀取路線清單失敗");
-    } finally {
-      setRoutesLoading(false);
-    }
-  }, [messageApi]);
-
-  // 依選定的路線（含未分路線/宅配）查詢訂單。
-  const fetchOrders = useCallback(
-    async (target: string) => {
-      setLoading(true);
-      try {
-        let url: string;
-        if (target === DELIVERY) {
-          url = "/api/orders?method=delivery";
-        } else if (target === UNASSIGNED) {
-          url = "/api/orders?route=unassigned";
-        } else {
-          url = `/api/orders?route=${encodeURIComponent(target)}`;
-        }
-        setData(await fetchJson<Order[]>(url));
-      } catch {
-        messageApi.error("讀取訂單資料失敗");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [messageApi],
-  );
-
-  // 路線清單與目前分組一起刷新（新增/修改/刪除/出貨後共用的收尾）。
-  const refresh = useCallback(() => {
-    fetchRouteOptions();
-    if (selected) fetchOrders(selected);
-  }, [fetchRouteOptions, fetchOrders, selected]);
-
-  useEffect(() => {
-    fetchRouteOptions();
-  }, [fetchRouteOptions]);
-
-  // 選定路線變動時查詢；未選則清空結果。切換路線一律清空勾選（FR-011：勾選限單一路線視圖）。
   useEffect(() => {
     setSelectedRowKeys([]);
-    if (selected) fetchOrders(selected);
-    else setData([]);
-  }, [selected, fetchOrders]);
+  }, [selected]);
 
-  // 重複下訂判定：以目前路線視圖的全部訂單（data）為母體，同一姓名鍵
-  // 出現超過一筆即為重複——與搜尋字串、篩選開關無關，data 重載時隨 memo 重算。
-  const dupKeys = useMemo(() => duplicateNameKeys(data), [data]);
-
-  // 重複下訂的訂單筆數（以訂單計，非客戶數），顯示於篩選開關。
-  const dupCount = useMemo(
-    () => countDuplicateOrders(data, dupKeys),
-    [data, dupKeys],
-  );
-
-  // 是否為重複下訂：姓名鍵為 null（防禦性，姓名必填）一律不算。
-  const isDup = (order: Order) => {
-    const key = orderKey(order);
-    return key !== null && dupKeys.has(key);
-  };
-
-  const baseFiltered = data.filter(
-    (order) =>
-      (order.customerName.includes(search) ||
-        (order.phone ?? "").includes(search) ||
-        (order.pickupSpotLabel ?? "").includes(search) ||
-        (order.shippingAddress ?? "").includes(search) ||
-        (formatPickupCode(order.spotCode, order.pickupNumber)
-          ?.toLowerCase()
-          .includes(search.toLowerCase()) ??
-          false) ||
-        String(order.id).includes(search)) &&
-      (!dupOnly || isDup(order)),
-  );
-
-  // 開啟篩選時讓同一客戶的訂單相鄰（組序＝鍵首次出現於 data 的索引）；
-  // 未開啟時完全不動既有排序。
-  const filtered = dupOnly
-    ? sortDuplicatesAdjacent(baseFiltered, data)
-    : baseFiltered;
-
-  // 計算路線總金額與站點總金額
-  const routeTotal = useMemo(() => {
-    return filtered.reduce((sum, order) => sum + order.total, 0);
-  }, [filtered]);
-
-  const stationTotals = useMemo(() => {
-    const map: Record<string, number> = {};
-    filtered.forEach((order) => {
-      const label = order.pickupSpotLabel || (order.deliveryMethod === "delivery" ? "宅配" : "未指定自取點");
-      map[label] = (map[label] || 0) + order.total;
-    });
-    return Object.entries(map)
-      .map(([label, total]) => ({ label, total }))
-      .sort((a, b) => b.total - a.total);
-  }, [filtered]);
+  const {
+    duplicateCount: dupCount,
+    filtered,
+    isDuplicate: isDup,
+    routeTotal,
+    stationTotals,
+  } = useOrderView(data, search, dupOnly);
 
   // 刪除單筆訂單（明細一併清除）；成功後刷新路線清單與目前分組。
   const removeOrder = async (order: Order) => {

@@ -136,23 +136,6 @@ export async function addProduct(
 }
 
 /**
- * 依傳入的有序 URL 陣列原子重寫某商品的完整圖片集合。
- * 單一 SQL（CTE）達原子性：全刪該商品舊圖 → 依序插入新圖（sort_order 1..n）。
- * 封面即 sort_order=1，讀取時由 getProducts 衍生為 imageUrl，無需另存欄位。
- * 供更新商品與圖片排序共用。呼叫端須先以 validateProductImages 保證 1–8 張。
- */
-export async function saveProductImages(productId: number, imageUrls: string[]) {
-  await sql`
-    WITH del AS (
-      DELETE FROM product_images WHERE product_id = ${productId}
-    )
-    INSERT INTO product_images (product_id, image_url, sort_order)
-    SELECT ${productId}, u.url, u.ord
-    FROM unnest(${imageUrls}::text[]) WITH ORDINALITY AS u(url, ord)
-  `;
-}
-
-/**
  * 依傳入的 id 順序原子重寫所有商品的 sort_order（1-based）。
  * 單一 SQL 語句即達原子性（Neon serverless HTTP 無互動式交易）；
  * 陣列中已不存在於 DB 的 id 會被 WHERE 自然略過。
@@ -170,37 +153,53 @@ export async function reorderProducts(ids: number[]) {
 }
 
 /**
- * 更新商品的非圖片欄位。圖片集合與封面（image_url）改由 saveProductImages 維護，
- * 故此處不再寫 image_url，避免兩處來源分歧。
+ * Atomically updates product details and replaces its ordered image set.
+ * Returning false means the product no longer exists.
  */
-export async function updateProductDetails(
+export async function updateProduct(
   id: number,
   code: string,
   price: number,
+  imageUrls: string[],
   categoryId: number,
   spec: string | null,
   description: string | null,
   promoType: string | null,
   promoConfig: PromoConfig | null,
   stock: number | null,
-) {
+): Promise<boolean> {
   const configJson = promoConfig === null ? null : JSON.stringify(promoConfig);
-  await sql`
-    UPDATE products
-    SET code = ${code},
-        price = ${price},
-        category_id = ${categoryId},
-        spec = ${spec},
-        description = ${description},
-        promo_type = ${promoType},
-        promo_config = ${configJson}::jsonb,
-        stock = ${stock}
-    WHERE id = ${id}
+  const rows = await sql`
+    WITH updated_product AS (
+      UPDATE products
+      SET code = ${code},
+          price = ${price},
+          category_id = ${categoryId},
+          spec = ${spec},
+          description = ${description},
+          promo_type = ${promoType},
+          promo_config = ${configJson}::jsonb,
+          stock = ${stock}
+      WHERE id = ${id}
+      RETURNING id
+    ),
+    deleted_images AS (
+      DELETE FROM product_images pi
+      USING updated_product p
+      WHERE pi.product_id = p.id
+    )
+    INSERT INTO product_images (product_id, image_url, sort_order)
+    SELECT p.id, u.url, u.ord
+    FROM updated_product p
+    CROSS JOIN unnest(${imageUrls}::text[]) WITH ORDINALITY AS u(url, ord)
+    RETURNING product_id
   `;
+  return rows.length > 0;
 }
 
-export async function deleteProduct(id: number) {
-  await sql`DELETE FROM products WHERE id = ${id}`;
+export async function deleteProduct(id: number): Promise<boolean> {
+  const rows = await sql`DELETE FROM products WHERE id = ${id} RETURNING id`;
+  return rows.length > 0;
 }
 
 /**

@@ -1,5 +1,5 @@
 import { getProducts, addProduct } from "@/app/lib/products";
-import { badRequest, jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler, readJson } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import {
   validateProductBody,
@@ -9,7 +9,7 @@ import {
 export const GET = jsonHandler(getProducts, "無法讀取商品資料");
 
 export const POST = jsonHandler(async (request) => {
-  const body = await request.json();
+  const body = await readJson(request);
   const parsed = validateProductBody(body, { requireName: true });
   if ("error" in parsed) return badRequest(parsed.error);
   const p = parsed.value;

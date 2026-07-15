@@ -1,11 +1,11 @@
+import { NextResponse } from "next/server";
 import {
   deleteProduct,
   getProductImageUrls,
-  saveProductImages,
-  updateProductDetails,
+  updateProduct,
 } from "@/app/lib/products";
-import { badRequest, jsonHandler } from "@/app/lib/api";
-import { deleteCloudinaryImage } from "@/app/lib/cloudinary";
+import { badRequest, jsonHandler, readJson } from "@/app/lib/api";
+import { deleteCloudinaryImagesBestEffort } from "@/app/lib/cloudinary";
 import { revalidateCache } from "@/app/lib/revalidate";
 import {
   parseId,
@@ -21,7 +21,7 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
   if ("error" in parsedId) return badRequest(parsedId.error);
   const { id } = parsedId;
 
-  const body = await request.json();
+  const body = await readJson(request);
   const parsed = validateProductBody(body, { requireName: false });
   if ("error" in parsed) return badRequest(parsed.error);
   const p = parsed.value;
@@ -32,11 +32,11 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
 
   // 先取舊圖集合以便算差集，再原子寫入新集合（含封面鏡射）與其餘欄位。
   const oldImageUrls = await getProductImageUrls(id);
-  await saveProductImages(id, newImageUrls);
-  await updateProductDetails(
+  const updated = await updateProduct(
     id,
     p.code,
     p.price,
+    newImageUrls,
     p.categoryId,
     p.spec,
     p.description,
@@ -44,10 +44,13 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
     p.promoConfig,
     p.stock,
   );
+  if (!updated) {
+    return NextResponse.json({ error: "商品不存在" }, { status: 404 });
+  }
 
   // 刪除「舊有但已不在新集合」的圖，避免 Cloudinary 孤兒；不誤刪仍在用的圖。
   const removed = oldImageUrls.filter((url) => !newImageUrls.includes(url));
-  await Promise.all(removed.map((url) => deleteCloudinaryImage(url)));
+  await deleteCloudinaryImagesBestEffort(removed);
 
   await revalidateCache("products");
   return { success: true };
@@ -62,9 +65,12 @@ export const DELETE = jsonHandler<Params>(async (_request, { params }) => {
   // 先取全部圖 URL，刪商品（CASCADE 清 product_images）後再刪 Cloudinary 全部檔。
   const imageUrls = await getProductImageUrls(id);
 
-  await deleteProduct(id);
+  const deleted = await deleteProduct(id);
+  if (!deleted) {
+    return NextResponse.json({ error: "商品不存在" }, { status: 404 });
+  }
 
-  await Promise.all(imageUrls.map((url) => deleteCloudinaryImage(url)));
+  await deleteCloudinaryImagesBestEffort(imageUrls);
 
   await revalidateCache("products");
   await revalidateCache("categories");

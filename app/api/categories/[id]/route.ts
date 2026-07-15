@@ -4,7 +4,7 @@ import {
   deleteCategory,
   countProductsInCategory,
 } from "@/app/lib/categories";
-import { badRequest, jsonHandler } from "@/app/lib/api";
+import { badRequest, jsonHandler, readJson } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { MAX_LEN, parseId } from "@/app/lib/validation";
 
@@ -16,7 +16,7 @@ export const PUT = jsonHandler<Params>(async (request, { params }) => {
   if ("error" in parsed) return badRequest(parsed.error);
   const { id } = parsed;
 
-  const body = await request.json();
+  const body = await readJson(request);
   const { name } = body as { name: string };
 
   const nameVal = name?.trim();

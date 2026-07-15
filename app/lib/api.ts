@@ -3,6 +3,21 @@ import { auth, isAllowedEmail } from "@/auth";
 
 type RouteHandler<Ctx> = (request: Request, context: Ctx) => Promise<unknown>;
 
+export class InvalidJsonError extends Error {
+  constructor() {
+    super("Invalid JSON body");
+    this.name = "InvalidJsonError";
+  }
+}
+
+export async function readJson(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    throw new InvalidJsonError();
+  }
+}
+
 /** 把驗證層（app/lib/validation.ts）回傳的錯誤訊息轉為 400 JSON 回應。 */
 export function badRequest(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -30,6 +45,9 @@ export function jsonHandler<Ctx = unknown>(
       const result = await fn(request, context);
       return result instanceof Response ? result : NextResponse.json(result);
     } catch (err) {
+      if (err instanceof InvalidJsonError) {
+        return badRequest(err.message);
+      }
       console.error(err);
       return NextResponse.json({ error: errorMessage }, { status: 500 });
     }

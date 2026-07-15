@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { getCategories, addCategory } from "@/app/lib/categories";
-import { jsonHandler } from "@/app/lib/api";
+import { jsonHandler, readJson } from "@/app/lib/api";
 import { revalidateCache } from "@/app/lib/revalidate";
 import { MAX_LEN } from "@/app/lib/validation";
 
 export const GET = jsonHandler(getCategories, "無法讀取分類資料");
 
 export const POST = jsonHandler(async (request) => {
-  const body = await request.json();
+  const body = await readJson(request);
   const { name } = body as { name: string };
 
   const nameVal = name?.trim();

@@ -39,11 +39,9 @@ import {
 } from "@/app/lib/promotions";
 import type { ProductRow as Product } from "@/app/lib/products";
 import { fetchJson, postJson, putJson, deleteJson } from "@/app/lib/api-client";
+import { MAX_PRODUCT_IMAGES } from "@/app/lib/product-constants";
 
 const promoFieldName = (configKey: string) => `promo_${configKey}`;
-
-/** 單一商品圖片張數上限（對應後端 validateProductImages 的 MAX_PRODUCT_IMAGES）。 */
-const MAX_PRODUCT_IMAGES = 8;
 
 /** 可拖拉排序的圖片縮圖；id 為圖片 URL。第一張即封面。 */
 function SortableThumb({

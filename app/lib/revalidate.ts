@@ -6,6 +6,11 @@ export async function revalidateCache(tag: string) {
   const frontendUrl = process.env.FRONTEND_URL;
   const token = process.env.ADMIN_SECRET_TOKEN;
 
+  if (!frontendUrl || !token) {
+    console.warn("[revalidate] FRONTEND_URL or ADMIN_SECRET_TOKEN is not configured");
+    return;
+  }
+
   try {
     await fetch(`${frontendUrl}/api/revalidate`, {
       method: "POST",

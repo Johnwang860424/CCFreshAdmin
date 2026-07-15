@@ -28,3 +28,17 @@ export async function deleteCloudinaryImage(url: string): Promise<void> {
     console.warn(`[cloudinary] 找不到要刪除的圖片：${publicId}`);
   }
 }
+
+export async function deleteCloudinaryImagesBestEffort(
+  urls: string[],
+): Promise<void> {
+  const results = await Promise.allSettled(urls.map(deleteCloudinaryImage));
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      console.warn(
+        `[cloudinary] 圖片清理失敗，保留待人工重試：${urls[index]}`,
+        result.reason,
+      );
+    }
+  });
+}
