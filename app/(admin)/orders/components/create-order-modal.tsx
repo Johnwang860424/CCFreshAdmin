@@ -51,12 +51,17 @@ interface OrderItemFormValue {
   quantity?: number;
 }
 
+/** 「未分路線」在路線選單中的替代值（routes.id 為正整數，不會衝突）。 */
+const UNASSIGNED_ROUTE = -1;
+
 /** 新增訂單表單值。 */
 interface CreateOrderFormValues {
   customerName: string;
   phone?: string;
   tag: string;
   deliveryMethod: "pickup" | "delivery";
+  /** 僅供前端過濾取貨點，不隨訂單送出；-1 = 未分路線。 */
+  routeId?: number;
   pickupSpotId?: number;
   shippingAddress?: string;
   note?: string;
@@ -80,6 +85,7 @@ export function CreateOrderModal({
   const [dataLoading, setDataLoading] = useState(false);
   const [form] = Form.useForm<CreateOrderFormValues>();
   const watchedMethod = Form.useWatch("deliveryMethod", form);
+  const watchedRouteId = Form.useWatch("routeId", form);
   const watchedItems = Form.useWatch("items", form);
 
   // 每次開窗重載商品與取貨點清單，確保剩餘庫存/售完標示為最新。
@@ -119,6 +125,29 @@ export function CreateOrderModal({
     () => new Map(products.map((p) => [p.id, p])),
     [products],
   );
+
+  // 路線選項：由取貨點清單去重推導（依取貨點順序首見排序），未分路線以 -1 表示排在最後。
+  const routeOptions = useMemo(() => {
+    const seen = new Map<number, string>();
+    let hasUnassigned = false;
+    for (const spot of pickupSpots) {
+      if (spot.routeId == null) hasUnassigned = true;
+      else if (!seen.has(spot.routeId))
+        seen.set(spot.routeId, spot.routeName ?? `路線 ${spot.routeId}`);
+    }
+    const options = [...seen].map(([value, label]) => ({ value, label }));
+    if (hasUnassigned)
+      options.push({ value: UNASSIGNED_ROUTE, label: "未分路線" });
+    return options;
+  }, [pickupSpots]);
+
+  // 取貨點選項：僅列出所選路線內的取貨點（未選路線時為空）。
+  const spotOptions = useMemo(() => {
+    if (watchedRouteId == null) return [];
+    return pickupSpots
+      .filter((s) => (s.routeId ?? UNASSIGNED_ROUTE) === watchedRouteId)
+      .map((s) => ({ label: `${s.city} ${s.township}`, value: s.id }));
+  }, [pickupSpots, watchedRouteId]);
 
   // 依目前表單明細，以共用 calcLineSubtotal 即時估算總額（與後端計算邏輯一致）。
   const estimatedTotal = useMemo(() => {
@@ -259,7 +288,7 @@ export function CreateOrderModal({
               rules={[{ required: true }]}
             >
               <Select
-                className="w-32"
+                style={{ width: 128 }}
                 options={TAG_OPTIONS.map((t) => ({ label: t, value: t }))}
                 onChange={cacheOrderSource}
               />
@@ -270,7 +299,7 @@ export function CreateOrderModal({
               rules={[{ required: true }]}
             >
               <Select
-                className="w-32"
+                style={{ width: 128 }}
                 options={[
                   { label: "自取", value: "pickup" },
                   { label: "宅配", value: "delivery" },
@@ -297,23 +326,45 @@ export function CreateOrderModal({
                   message="目前沒有可用的取貨點，請先於「自取地點」建立後，再新增自取訂單。"
                 />
               )}
-              <Form.Item
-                label="取貨點"
-                name="pickupSpotId"
-                rules={[{ required: true, message: "請選擇取貨點" }]}
-              >
-                <Select
-                  placeholder="選擇取貨點"
-                  showSearch={{
-                    optionFilterProp: 'label'
-                  }}
-                  options={pickupSpots.map((s) => ({
-                    label: `${s.city} ${s.township}`,
-                    value: s.id,
-                  }))}
-                  notFoundContent="尚無取貨點"
-                />
-              </Form.Item>
+              <Space size="middle" className="w-full" wrap>
+                <Form.Item
+                  label="路線"
+                  name="routeId"
+                  rules={[{ required: true, message: "請選擇路線" }]}
+                >
+                  <Select
+                    style={{ width: 300 }}
+                    placeholder="選擇路線"
+                    showSearch={{
+                      optionFilterProp: 'label'
+                    }}
+                    options={routeOptions}
+                    // 換路線時清空已選取貨點，避免留下不屬於該路線的選擇。
+                    onChange={() =>
+                      form.setFieldValue("pickupSpotId", undefined)
+                    }
+                    notFoundContent="尚無路線"
+                  />
+                </Form.Item>
+                <Form.Item
+                  label="取貨點"
+                  name="pickupSpotId"
+                  rules={[{ required: true, message: "請選擇取貨點" }]}
+                >
+                  <Select
+                    style={{ width: 400 }}
+                    placeholder={
+                      watchedRouteId == null ? "請先選擇路線" : "選擇取貨點"
+                    }
+                    disabled={watchedRouteId == null}
+                    showSearch={{
+                      optionFilterProp: 'label'
+                    }}
+                    options={spotOptions}
+                    notFoundContent="此路線尚無取貨點"
+                  />
+                </Form.Item>
+              </Space>
             </>
           )}
 
