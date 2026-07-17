@@ -96,7 +96,10 @@ export default function OrderSummaryPage() {
     if (!matrix || matrix.rows.length === 0) return;
 
     try {
-      const allProducts = await fetchJson<ProductRow[]>("/api/products");
+      // CSV 商品列順序與統計畫面的商品欄一致：依統計排序。
+      const allProducts = (
+        await fetchJson<ProductRow[]>("/api/products")
+      ).sort((a, b) => a.summarySortOrder - b.summarySortOrder || a.id - b.id);
 
       const header = [
         "產品名稱",

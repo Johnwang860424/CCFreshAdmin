@@ -3,7 +3,7 @@
 
 /** pivot 結果：欄（商品）、列（取貨點）與每商品總量。 */
 interface RouteMatrixPivot {
-  /** 欄位：範圍內訂單出現過的所有商品名稱（依 products.sort_order，次序同則依名稱 zh-Hant） */
+  /** 欄位：範圍內訂單出現過的所有商品名稱（依統計排序 summary_sort_order，次序同則依名稱 zh-Hant） */
   products: string[];
   /** 列：每個取貨點一筆，含各商品數量（保留輸入列的取貨點順序） */
   rows: {
@@ -18,7 +18,8 @@ interface RouteMatrixPivot {
 /**
  * 將 SQL 聚合列（snake_case：spot_id / city / township / product_name / product_sort / qty）
  * pivot 成交叉表。輸入列須已依期望的取貨點順序排序（city, sort_order, id）。
- * 商品欄依 products.sort_order 排序（已刪除商品 product_sort 為 NULL → 排最後）。
+ * 商品欄依 product_sort（統計排序 summary_sort_order）排序
+ * （已刪除商品 product_sort 為 NULL → 排最後）。
  */
 export function buildRouteMatrix(
   rows: Record<string, unknown>[],
@@ -29,7 +30,7 @@ export function buildRouteMatrix(
     { label: string; quantities: Record<string, number> }
   >();
   const productTotals: Record<string, number> = {};
-  // 商品欄位排序鍵：依 products.sort_order（已刪除商品的 product_id 為 NULL → 排最後）。
+  // 商品欄位排序鍵：依統計排序 product_sort（已刪除商品的 product_id 為 NULL → 排最後）。
   const productSortKey = new Map<string, number>();
 
   for (const r of rows) {
@@ -45,7 +46,7 @@ export function buildRouteMatrix(
     productTotals[product] = (productTotals[product] ?? 0) + qty;
   }
 
-  // 商品欄位依 products.sort_order 排序；同序則以名稱（zh-Hant）穩定排序。
+  // 商品欄位依統計排序排序；同序則以名稱（zh-Hant）穩定排序。
   const products = [...productSortKey.keys()].sort((a, b) => {
     const sa = productSortKey.get(a)!;
     const sb = productSortKey.get(b)!;

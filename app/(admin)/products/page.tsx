@@ -23,12 +23,15 @@ interface Category {
   name: string;
 }
 
+/** 排序模式：front＝前台（消費者）排序 sort_order；summary＝路線訂單統計排序 summary_sort_order。 */
+type SortMode = "none" | "front" | "summary";
+
 export default function ProductsPage() {
   const [data, setData] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [sortMode, setSortMode] = useState(false);
+  const [sortMode, setSortMode] = useState<SortMode>("none");
   const [reordering, setReordering] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
@@ -80,7 +83,26 @@ export default function ProductsPage() {
     }
   };
 
-  // 排序模式拖拉結束：樂觀更新列表順序並儲存，失敗回滾。
+  // 進入排序模式：清空搜尋；統計排序模式先把列表改依統計順序（summarySortOrder）顯示。
+  const enterSortMode = (mode: Exclude<SortMode, "none">) => {
+    setSearch("");
+    if (mode === "summary") {
+      setData((prev) =>
+        [...prev].sort(
+          (a, b) => a.summarySortOrder - b.summarySortOrder || a.id - b.id,
+        ),
+      );
+    }
+    setSortMode(mode);
+  };
+
+  // 離開排序模式：統計排序模式曾把列表改為統計順序，重新載入以還原前台順序。
+  const finishSortMode = () => {
+    if (sortMode === "summary") fetchData();
+    setSortMode("none");
+  };
+
+  // 排序模式拖拉結束：樂觀更新列表順序並儲存（依模式寫入前台或統計排序），失敗回滾。
   const handleDragEnd = async ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
 
@@ -92,9 +114,13 @@ export default function ProductsPage() {
     const next = arrayMove(prev, oldIndex, newIndex);
     setData(next); // 樂觀更新
 
+    const endpoint =
+      sortMode === "summary"
+        ? "/api/products/reorder-summary"
+        : "/api/products/reorder";
     try {
       setReordering(true);
-      await putJson("/api/products/reorder", { ids: next.map((i) => i.id) });
+      await putJson(endpoint, { ids: next.map((i) => i.id) });
     } catch {
       setData(prev); // 失敗回滾
       messageApi.error("排序儲存失敗，已還原順序");
@@ -110,14 +136,18 @@ export default function ProductsPage() {
         <PageHeader
           title="商品管理"
           actions={
-            sortMode ? (
+            sortMode !== "none" ? (
               <Space wrap>
-                <Text type="secondary">拖拉左側把手調整順序，變更即時儲存</Text>
+                <Text type="secondary">
+                  拖拉左側把手調整
+                  {sortMode === "summary" ? "統計排序" : "前台排序"}
+                  ，變更即時儲存
+                </Text>
                 <Button
                   type="primary"
                   icon={<SortAscendingOutlined />}
                   loading={reordering}
-                  onClick={() => setSortMode(false)}
+                  onClick={finishSortMode}
                 >
                   完成排序
                 </Button>
@@ -141,12 +171,15 @@ export default function ProductsPage() {
                 </Button>
                 <Button
                   icon={<SortAscendingOutlined />}
-                  onClick={() => {
-                    setSearch("");
-                    setSortMode(true);
-                  }}
+                  onClick={() => enterSortMode("front")}
                 >
-                  排序
+                  前台排序
+                </Button>
+                <Button
+                  icon={<SortAscendingOutlined />}
+                  onClick={() => enterSortMode("summary")}
+                >
+                  統計排序
                 </Button>
                 <Button
                   type="primary"
@@ -162,8 +195,8 @@ export default function ProductsPage() {
 
         <Spin spinning={loading}>
           <ProductsTable
-            data={sortMode ? data : filtered}
-            sortMode={sortMode}
+            data={sortMode !== "none" ? data : filtered}
+            sortMode={sortMode !== "none"}
             onEdit={openModal}
             onDelete={handleDelete}
             onReorderDragEnd={handleDragEnd}
