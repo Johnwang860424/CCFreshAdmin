@@ -16,6 +16,9 @@ CREATE TABLE products (
   promo_type   TEXT,
   promo_config JSONB,
   sort_order   INTEGER NOT NULL,
+  -- 路線訂單統計畫面的商品欄順序；與前台排序 sort_order 各自獨立維護
+  -- （migration 008 初始回填為 sort_order，新增商品取 MAX+1）。
+  summary_sort_order INTEGER NOT NULL,
   -- 剩餘可售數量（NULL＝不限量／不追蹤；0＝售完）。訂單成立於同一 SQL 語句內
   -- 原子扣減，具名 CHECK 為防超賣最終防線（應用層依 constraint 名分流 23514）。
   stock        INTEGER,

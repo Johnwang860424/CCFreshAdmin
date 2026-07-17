@@ -15,6 +15,8 @@ interface ProductDbRow {
   promo_type: string | null;
   promo_config: PromoConfig | null;
   sort_order: number;
+  /** 路線訂單統計的商品欄順序（與 sort_order 各自獨立維護）。 */
+  summary_sort_order: number;
   /** 剩餘可售數量；NULL＝不限量（不追蹤庫存）。 */
   stock: number | null;
   images: string[];
@@ -36,6 +38,8 @@ export interface ProductRow {
   promoConfig: PromoConfig | null;
   promoSummary: string | null;
   sortOrder: number;
+  /** 路線訂單統計的商品欄順序（與 sortOrder 各自獨立維護）。 */
+  summarySortOrder: number;
   /** 剩餘可售數量；null＝不限量（不追蹤庫存）、0＝售完。訂單成立時原子扣減。 */
   stock: number | null;
   /** 依 sort_order 排好的完整圖片 URL 陣列（1–8 張）；images[0] 即封面（= imageUrl）。 */
@@ -64,6 +68,7 @@ function toProductRow(row: ProductDbRow): ProductRow {
     promoConfig,
     promoSummary,
     sortOrder: row.sort_order,
+    summarySortOrder: row.summary_sort_order,
     stock: row.stock ?? null,
     images,
   };
@@ -84,6 +89,7 @@ export const getProducts = unstable_cache(
         p.promo_type,
         p.promo_config,
         p.sort_order,
+        p.summary_sort_order,
         p.stock,
         COALESCE(
           (
@@ -116,14 +122,15 @@ export async function addProduct(
   stock: number | null,
 ) {
   const configJson = promoConfig === null ? null : JSON.stringify(promoConfig);
-  // 單一原子語句（CTE）：插入 products（sort_order 取 MAX+1 排在最後、回傳新 id），
-  // 再依序插入其 product_images（unnest WITH ORDINALITY 給 sort_order 1..n）。封面即 sort_order=1。
+  // 單一原子語句（CTE）：插入 products（sort_order 與 summary_sort_order 各取 MAX+1 排在兩套排序的最後、
+  // 回傳新 id），再依序插入其 product_images（unnest WITH ORDINALITY 給 sort_order 1..n）。封面即 sort_order=1。
   await sql`
     WITH new_product AS (
-      INSERT INTO products (code, name, price, category_id, spec, description, promo_type, promo_config, sort_order, stock)
+      INSERT INTO products (code, name, price, category_id, spec, description, promo_type, promo_config, sort_order, summary_sort_order, stock)
       VALUES (
         ${code}, ${name}, ${price}, ${categoryId}, ${spec}, ${description}, ${promoType}, ${configJson}::jsonb,
         (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM products),
+        (SELECT COALESCE(MAX(summary_sort_order), 0) + 1 FROM products),
         ${stock}
       )
       RETURNING id
@@ -144,6 +151,22 @@ export async function reorderProducts(ids: number[]) {
   await sql`
     UPDATE products AS p
     SET sort_order = v.ord
+    FROM (
+      SELECT id, ord
+      FROM unnest(${ids}::int[]) WITH ORDINALITY AS t(id, ord)
+    ) AS v
+    WHERE p.id = v.id
+  `;
+}
+
+/**
+ * 依傳入的 id 順序原子重寫所有商品的 summary_sort_order（1-based，路線訂單統計用）。
+ * 與 reorderProducts 同一模式；陣列中已不存在於 DB 的 id 會被 WHERE 自然略過。
+ */
+export async function reorderProductsSummary(ids: number[]) {
+  await sql`
+    UPDATE products AS p
+    SET summary_sort_order = v.ord
     FROM (
       SELECT id, ord
       FROM unnest(${ids}::int[]) WITH ORDINALITY AS t(id, ord)

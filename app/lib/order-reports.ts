@@ -39,19 +39,19 @@ export async function getRouteOrderMatrix(
     route === "all"
       ? await sql`
           SELECT ps.id AS spot_id, ps.city, ps.township, ps.route_id, ps.sort_order,
-                 oi.product_name, p.sort_order AS product_sort, SUM(oi.quantity)::int AS qty
+                 oi.product_name, p.summary_sort_order AS product_sort, SUM(oi.quantity)::int AS qty
           FROM orders o
           JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
           JOIN order_items oi ON oi.order_id = o.id
           LEFT JOIN products p ON p.id = oi.product_id
           WHERE o.delivery_method = 'pickup'
             AND (o.created_at AT TIME ZONE 'Asia/Taipei')::date BETWEEN ${from} AND ${to}
-          GROUP BY ps.id, ps.city, ps.township, ps.route_id, ps.sort_order, oi.product_name, p.sort_order
+          GROUP BY ps.id, ps.city, ps.township, ps.route_id, ps.sort_order, oi.product_name, p.summary_sort_order
           ORDER BY ps.city, ps.sort_order, ps.id
         `
       : await sql`
           SELECT ps.id AS spot_id, ps.city, ps.township, ps.route_id, ps.sort_order,
-                 oi.product_name, p.sort_order AS product_sort, SUM(oi.quantity)::int AS qty
+                 oi.product_name, p.summary_sort_order AS product_sort, SUM(oi.quantity)::int AS qty
           FROM orders o
           JOIN pickup_spots ps ON ps.id = o.pickup_spot_id
           JOIN order_items oi ON oi.order_id = o.id
@@ -59,7 +59,7 @@ export async function getRouteOrderMatrix(
           WHERE o.delivery_method = 'pickup'
             AND (o.created_at AT TIME ZONE 'Asia/Taipei')::date BETWEEN ${from} AND ${to}
             AND ps.route_id IS NOT DISTINCT FROM ${route === "unassigned" ? null : route}
-          GROUP BY ps.id, ps.city, ps.township, ps.route_id, ps.sort_order, oi.product_name, p.sort_order
+          GROUP BY ps.id, ps.city, ps.township, ps.route_id, ps.sort_order, oi.product_name, p.summary_sort_order
           ORDER BY ps.city, ps.sort_order, ps.id
         `;
 
