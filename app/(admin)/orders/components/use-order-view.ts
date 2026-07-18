@@ -30,7 +30,7 @@ export function useOrderView(data: Order[], search: string, dupOnly: boolean) {
           (order.phone ?? "").includes(search) ||
           (order.pickupSpotLabel ?? "").includes(search) ||
           (order.shippingAddress ?? "").includes(search) ||
-          (formatPickupCode(order.spotCode, order.pickupNumber)
+          (formatPickupCode(order.spotCode, order.pickupNumber, order.tag)
             ?.toLowerCase()
             .includes(normalizedSearch) ??
             false) ||

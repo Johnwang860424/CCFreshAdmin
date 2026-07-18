@@ -240,7 +240,7 @@ export function CreateOrderModal({
       });
       messageApi.success("訂單已新增");
       form.resetFields();
-      onCreated(formatPickupCode(res.spotCode, res.pickupNumber));
+      onCreated(formatPickupCode(res.spotCode, res.pickupNumber, values.tag));
     },
     [form, messageApi, onCreated],
   );

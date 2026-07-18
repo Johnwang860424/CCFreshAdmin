@@ -77,7 +77,8 @@ export async function countSameNameOrdersInGroup(
 /**
  * 後台手動建立一筆訂單（含明細）。
  * - 明細的單價/促銷/小計一律以商品「目前」資料快照計算（calcLineSubtotal），不採信前端金額。
- * - 依既有約定指派 pickup_number（自取每取貨點各自遞增；宅配於 pickup_spot_id IS NULL 作用域遞增），撞唯一鍵時重試。
+ * - 依既有約定指派 pickup_number（自取每「取貨點×來源 tag」各自遞增；宅配於 pickup_spot_id IS NULL
+ *   作用域內同樣依來源 tag 各自遞增），撞唯一鍵時重試。
  * - 以單一 CTE SQL 語句原子寫入 orders 與 order_items（Neon HTTP 無互動式交易）。
  * 回傳新訂單 id。
  */
@@ -194,18 +195,19 @@ export async function createOrder(input: ValidatedCreateOrder): Promise<number> 
 
   const spotId = input.deliveryMethod === "pickup" ? input.pickupSpotId : null;
 
-  // 自取或宅配：取下一個號碼牌；撞唯一鍵 (pickup_spot_id, pickup_number) 時重算重試。
+  // 自取或宅配：取該來源的下一個號碼牌（各來源序列獨立）；
+  // 撞唯一鍵 (pickup_spot_id, tag, pickup_number) 時重算重試。
   for (let attempt = 0; attempt < PICKUP_NUMBER_MAX_RETRY; attempt++) {
     const [{ next }] = (await (spotId !== null
       ? sql`
           SELECT COALESCE(MAX(pickup_number), 0) + 1 AS next
           FROM orders
-          WHERE pickup_spot_id = ${spotId}
+          WHERE pickup_spot_id = ${spotId} AND tag = ${input.tag}
         `
       : sql`
           SELECT COALESCE(MAX(pickup_number), 0) + 1 AS next
           FROM orders
-          WHERE pickup_spot_id IS NULL
+          WHERE pickup_spot_id IS NULL AND tag = ${input.tag}
         `)) as { next: number }[];
     try {
       return await insertOnce(next);

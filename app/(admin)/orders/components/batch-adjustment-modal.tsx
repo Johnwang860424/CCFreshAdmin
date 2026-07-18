@@ -141,7 +141,8 @@ export function BatchAdjustmentModal({
     {
       title: "取貨號",
       width: 90,
-      render: (_, row) => formatPickupCode(row.order.spotCode, row.order.pickupNumber) ?? "-",
+      render: (_, row) =>
+        formatPickupCode(row.order.spotCode, row.order.pickupNumber, row.order.tag) ?? "-",
     },
     {
       title: "客戶",

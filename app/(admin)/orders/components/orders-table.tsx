@@ -183,7 +183,7 @@ export function OrdersTable({
       key: "pickupNumber",
       width: 90,
       render: (_: unknown, order: Order) => {
-        const code = formatPickupCode(order.spotCode, order.pickupNumber);
+        const code = formatPickupCode(order.spotCode, order.pickupNumber, order.tag);
         return code == null ? (
           "-"
         ) : (
