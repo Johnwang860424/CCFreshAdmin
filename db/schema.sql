@@ -61,10 +61,11 @@ CREATE TABLE orders (
   delivery_method  TEXT NOT NULL DEFAULT 'pickup',
   -- 自取點以 FK 連結；ON DELETE RESTRICT 確保仍有訂單引用的取貨點無法被刪除。
   pickup_spot_id   INTEGER REFERENCES pickup_spots(id) ON DELETE RESTRICT,
-  -- 現場取貨號碼牌：每個取貨點各自從 1 遞增（宅配訂單為 NULL）。
-  -- 號碼作用域為單一取貨點，跨點可重複，故唯一鍵為 (pickup_spot_id, pickup_number)。
+  -- 現場取貨號碼牌：每個「取貨點 × 來源 tag」各自從 1 遞增（宅配訂單的取貨點為 NULL，
+  -- 於 NULL 作用域內同樣依來源分開遞增）。跨點／跨來源可重複，
+  -- 故唯一鍵為 (pickup_spot_id, tag, pickup_number)（migration 009）。
   -- 寫入端約定：pickup_number = (SELECT COALESCE(MAX(pickup_number),0)+1
-  --   FROM orders WHERE pickup_spot_id = $spot)，撞唯一鍵時重試。
+  --   FROM orders WHERE pickup_spot_id = $spot AND tag = $tag)，撞唯一鍵時重試。
   -- 結單會刪除該分組訂單，故每檔團購結單後號碼自然歸 1。
   pickup_number    INTEGER NOT NULL,
   shipping_address TEXT,
@@ -72,7 +73,7 @@ CREATE TABLE orders (
   total            INTEGER NOT NULL DEFAULT 0,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   tag              TEXT NOT NULL DEFAULT '網站',
-  CONSTRAINT orders_pickup_spot_id_pickup_number_key UNIQUE NULLS NOT DISTINCT (pickup_spot_id, pickup_number)
+  CONSTRAINT orders_pickup_spot_id_tag_pickup_number_key UNIQUE NULLS NOT DISTINCT (pickup_spot_id, tag, pickup_number)
 );
 
 CREATE TABLE order_items (
