@@ -100,7 +100,7 @@ export function OrderItemsGrid({
         />
       ) : null}
       {rows.length > 0 && (
-        // 縮小 InputNumber 內距，28px 欄寬內仍容得下三位數。
+        // 縮小 InputNumber 內距，34px 輸入框內仍容得下三位數。
         <ConfigProvider
           theme={{ components: { InputNumber: { paddingInline: 2 } } }}
         >
@@ -147,10 +147,9 @@ export function OrderItemsGrid({
                             Number(value) === 0 ? "" : String(value ?? "")
                           }
                           controls={false}
-                          variant="borderless"
                           disabled={row.inputDisabled}
                           aria-label={`${row.name} 數量`}
-                          style={{ width: 28 }}
+                          style={{ width: 34 }}
                           onFocus={selectAllOnFocus}
                           onKeyDown={limitDigitsOnly}
                         />
