@@ -27,6 +27,8 @@ const { Text } = Typography;
 /** 來源標籤選項（與後端 ORDER_TAGS 對應）；預設「網站」。 */
 const TAG_OPTIONS = ["網站", "FB", "Line"] as const;
 const ORDER_SOURCE_STORAGE_KEY = "orders:create:last-source";
+const ORDER_ROUTE_STORAGE_KEY = "orders:create:last-route";
+const ORDER_SPOT_STORAGE_KEY = "orders:create:last-spot";
 
 function getCachedOrderSource(): (typeof TAG_OPTIONS)[number] {
   try {
@@ -40,6 +42,25 @@ function getCachedOrderSource(): (typeof TAG_OPTIONS)[number] {
 function cacheOrderSource(source: string) {
   try {
     window.localStorage.setItem(ORDER_SOURCE_STORAGE_KEY, source);
+  } catch {
+    // localStorage may be unavailable (for example, in a restricted browser mode).
+  }
+}
+
+function getCachedId(key: string): number | undefined {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw == null) return undefined;
+    const value = Number(raw);
+    return Number.isInteger(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function cacheId(key: string, value: number) {
+  try {
+    window.localStorage.setItem(key, String(value));
   } catch {
     // localStorage may be unavailable (for example, in a restricted browser mode).
   }
@@ -110,6 +131,23 @@ export function CreateOrderModal({
             quantity: 0,
           })),
         });
+        // 帶回上次選擇的路線/取貨點（僅在仍存在於目前清單時套用）。
+        const cachedRouteId = getCachedId(ORDER_ROUTE_STORAGE_KEY);
+        if (
+          cachedRouteId != null &&
+          spots.some((s) => (s.routeId ?? UNASSIGNED_ROUTE) === cachedRouteId)
+        ) {
+          const cachedSpotId = getCachedId(ORDER_SPOT_STORAGE_KEY);
+          const spotValid = spots.some(
+            (s) =>
+              s.id === cachedSpotId &&
+              (s.routeId ?? UNASSIGNED_ROUTE) === cachedRouteId,
+          );
+          form.setFieldsValue({
+            routeId: cachedRouteId,
+            ...(spotValid ? { pickupSpotId: cachedSpotId } : {}),
+          });
+        }
       } catch {
         if (!cancelled) messageApi.error("讀取商品或取貨點清單失敗");
       } finally {
@@ -340,9 +378,10 @@ export function CreateOrderModal({
                     }}
                     options={routeOptions}
                     // 換路線時清空已選取貨點，避免留下不屬於該路線的選擇。
-                    onChange={() =>
-                      form.setFieldValue("pickupSpotId", undefined)
-                    }
+                    onChange={(value: number) => {
+                      cacheId(ORDER_ROUTE_STORAGE_KEY, value);
+                      form.setFieldValue("pickupSpotId", undefined);
+                    }}
                     notFoundContent="尚無路線"
                   />
                 </Form.Item>
@@ -361,6 +400,9 @@ export function CreateOrderModal({
                       optionFilterProp: 'label'
                     }}
                     options={spotOptions}
+                    onChange={(value: number) =>
+                      cacheId(ORDER_SPOT_STORAGE_KEY, value)
+                    }
                     notFoundContent="此路線尚無取貨點"
                   />
                 </Form.Item>
