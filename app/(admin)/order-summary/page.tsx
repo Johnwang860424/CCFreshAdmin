@@ -111,15 +111,24 @@ export default function OrderSummaryPage() {
         "小計",
       ];
 
-      const bodyRows = allProducts.map((product, idx) => {
+      // 列的真實來源是統計結果：商品清單只提供順序與單價。已刪除（或改名前）的商品
+      // 仍留在訂單快照裡，商品清單查不到 → 補在最後、單價留空，避免數量從 CSV 消失。
+      const knownNames = new Set(allProducts.map((p) => p.name));
+      const orphanNames = matrix.products.filter((n) => !knownNames.has(n));
+      const rowSources: { name: string; price: number | "" }[] = [
+        ...allProducts.map((p) => ({ name: p.name, price: p.price })),
+        ...orphanNames.map((name) => ({ name, price: "" as const })),
+      ];
+
+      const bodyRows = rowSources.map((src, idx) => {
         const rowIndex = idx + 2;
         return [
-          product.name,
-          matrix.productTotals[product.name] ?? 0,
+          src.name,
+          matrix.productTotals[src.name] ?? 0,
           "",
           "",
           `=C${rowIndex}-D${rowIndex}`,
-          product.price,
+          src.price,
           `=E${rowIndex}*F${rowIndex}`,
         ];
       });
