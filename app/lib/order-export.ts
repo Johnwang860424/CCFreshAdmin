@@ -9,12 +9,12 @@ import { formatPickupCode } from "@/app/lib/pickup-code";
 const EXPORT_HEADER = [
   "取貨號",
   "客戶姓名",
-  "來源",
   "取貨地點",
   "購買清單",
   "訂單總額",
   "聯絡電話",
   "備註",
+  "來源",
 ];
 
 /** 單筆訂單轉為一列（聯絡電話以文字保留，避免掉開頭 0；xlsx 字串即文字格）。 */
@@ -23,7 +23,6 @@ function orderToRow(order: OrderRow): (string | number)[] {
     // 取貨號：站點代碼＋來源字母＋流水號（如 A5 / AL5 / AS5），與訂單管理頁顯示一致
     formatPickupCode(order.spotCode, order.pickupNumber, order.tag ?? "網站") ?? "",
     order.customerName,
-    order.tag ?? "網站",
     // 取貨地點：自取帶入「鄉鎮」（縣市已由分頁區分），宅配帶入收件地址
     order.deliveryMethod === "delivery"
       ? (order.shippingAddress ?? "")
@@ -32,6 +31,7 @@ function orderToRow(order: OrderRow): (string | number)[] {
     order.total,
     order.phone ?? "",
     order.note ?? "",
+    order.tag ?? "網站",
   ];
 }
 
