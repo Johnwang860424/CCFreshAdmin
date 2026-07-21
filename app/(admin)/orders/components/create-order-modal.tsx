@@ -96,8 +96,8 @@ export function CreateOrderModal({
 }: {
   open: boolean;
   onClose: () => void;
-  /** 建立成功後回呼，帶入取貨號顯示字串（formatPickupCode 的結果）。 */
-  onCreated: (pickupCode: string | null) => void;
+  /** 建立成功後回呼，帶入取貨號顯示字串（formatPickupCode 的結果）與取貨地點。 */
+  onCreated: (pickupCode: string | null, pickupLocation: string | null) => void;
 }) {
   const { modal, message: messageApi } = App.useApp();
   const [creating, setCreating] = useState(false);
@@ -239,10 +239,19 @@ export function CreateOrderModal({
         ...(confirmDuplicate ? { confirmDuplicate: true } : {}),
       });
       messageApi.success("訂單已新增");
+      // 取貨地點：自取取所選取貨點的「縣市 鄉鎮」；宅配不顯示地點（null）。
+      const spot =
+        values.deliveryMethod === "pickup"
+          ? pickupSpots.find((s) => s.id === values.pickupSpotId)
+          : undefined;
+      const pickupLocation = spot ? `${spot.city} ${spot.township}` : null;
       form.resetFields();
-      onCreated(formatPickupCode(res.spotCode, res.pickupNumber, values.tag));
+      onCreated(
+        formatPickupCode(res.spotCode, res.pickupNumber, values.tag),
+        pickupLocation,
+      );
     },
-    [form, messageApi, onCreated],
+    [form, messageApi, onCreated, pickupSpots],
   );
 
   const handleCreate = useCallback(async () => {
