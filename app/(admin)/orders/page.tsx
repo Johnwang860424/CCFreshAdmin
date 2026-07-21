@@ -65,6 +65,9 @@ export default function OrdersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [successModalOpen, setSuccessModalOpen] = useState(false);
   const [createdOrderCode, setCreatedOrderCode] = useState<string | null>(null);
+  const [createdOrderLocation, setCreatedOrderLocation] = useState<string | null>(
+    null,
+  );
 
   // 修改訂單視窗狀態（表單與商品載入由 EditOrderModal 自理）。
   const [editOpen, setEditOpen] = useState(false);
@@ -335,9 +338,10 @@ export default function OrdersPage() {
       <CreateOrderModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        onCreated={(code) => {
+        onCreated={(code, location) => {
           setCreateOpen(false);
           setCreatedOrderCode(code);
+          setCreatedOrderLocation(location);
           setSuccessModalOpen(true);
           refresh();
         }}
@@ -381,6 +385,7 @@ export default function OrdersPage() {
       <OrderSuccessModal
         open={successModalOpen}
         pickupCode={createdOrderCode}
+        pickupLocation={createdOrderLocation}
         onClose={() => setSuccessModalOpen(false)}
       />
     </>
