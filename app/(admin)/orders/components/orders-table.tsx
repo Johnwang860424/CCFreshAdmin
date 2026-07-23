@@ -2,6 +2,7 @@
 
 // 訂單列表：主表格（含跨分頁全選、展開明細列、編輯/刪除操作）。
 // 篩選/排序由頁面完成後以 data 傳入；勾選狀態由頁面持有（跨表格與出貨/匯出動作共用）。
+import { useState } from "react";
 import type { Key } from "react";
 import {
   Button,
@@ -158,6 +159,12 @@ export function OrdersTable({
   onEdit: (order: Order) => void;
   onDelete: (order: Order) => void;
 }) {
+  // 建立時間排序：受控的兩段式切換（新→舊 ⇄ 舊→新），不提供 antd 預設的「無排序」狀態，
+  // 以免第一下按下去因後端資料本就是 created_at DESC 而看起來沒反應。
+  const [createdSort, setCreatedSort] = useState<"ascend" | "descend">(
+    "descend",
+  );
+
   // 表頭全選：涵蓋目前篩選結果的所有分頁（非僅目前頁）。
   const dataKeys = data.map((o) => o.id);
   const selectedKeySet = new Set(selectedRowKeys);
@@ -241,9 +248,10 @@ export function OrdersTable({
       dataIndex: "createdAt",
       key: "createdAt",
       width: 180,
-      // 依建立時間排序（預設新→舊，可點欄位標題切換）。createdAt 為 ISO 字串，字典序即時間序。
+      // 依建立時間排序（預設新→舊，點欄位標題在新→舊/舊→新間切換）。createdAt 為 ISO 字串，字典序即時間序。
       sorter: (a: Order, b: Order) => a.createdAt.localeCompare(b.createdAt),
-      defaultSortOrder: "descend",
+      sortOrder: createdSort,
+      sortDirections: ["descend", "ascend"],
       render: (createdAt: string) =>
         new Date(createdAt).toLocaleString("zh-TW", {
           timeZone: "Asia/Taipei",
@@ -300,6 +308,11 @@ export function OrdersTable({
         rowExpandable: () => true,
       }}
       pagination={{ defaultPageSize: 10, showSizeChanger: true }}
+      onChange={(_pagination, _filters, sorter) => {
+        // 受控排序：只切新→舊/舊→新兩態。antd 第三下會回傳 undefined（取消），一律當成新→舊。
+        const s = Array.isArray(sorter) ? sorter[0] : sorter;
+        setCreatedSort(s.order === "ascend" ? "ascend" : "descend");
+      }}
       locale={{ emptyText: "此路線目前沒有訂單" }}
       scroll={{ x: "max-content" }}
     />
