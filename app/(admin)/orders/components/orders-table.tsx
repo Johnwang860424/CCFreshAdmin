@@ -241,6 +241,9 @@ export function OrdersTable({
       dataIndex: "createdAt",
       key: "createdAt",
       width: 180,
+      // 依建立時間排序（預設新→舊，可點欄位標題切換）。createdAt 為 ISO 字串，字典序即時間序。
+      sorter: (a: Order, b: Order) => a.createdAt.localeCompare(b.createdAt),
+      defaultSortOrder: "descend",
       render: (createdAt: string) =>
         new Date(createdAt).toLocaleString("zh-TW", {
           timeZone: "Asia/Taipei",
