@@ -77,6 +77,7 @@ export default function OrdersPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [selectionShipping, setSelectionShipping] = useState(false);
   const [selectionExporting, setSelectionExporting] = useState(false);
+  const [allExporting, setAllExporting] = useState(false);
   const [batchAdjustmentOpen, setBatchAdjustmentOpen] = useState(false);
 
   // 進到畫面時僅取得有訂單的路線清單（含未分路線/宅配旗標），不載入全部訂單。
@@ -180,6 +181,26 @@ export default function OrdersPage() {
     }
   };
 
+  // 一鍵匯出所有訂單：不受路線篩選/勾選影響，全部訂單匯成單一分頁（依路線排序、各路線空一列）。
+  const exportAll = async () => {
+    const filename = safeFilename(`訂單_全部_${taipeiDateStamp()}.xlsx`);
+    setAllExporting(true);
+    try {
+      const res = await fetch("/api/orders/export-all");
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        messageApi.error(err?.error || "匯出失敗");
+        return;
+      }
+      downloadBlob(await res.blob(), filename);
+      messageApi.success("已匯出所有訂單（依路線排序）");
+    } catch {
+      messageApi.error("匯出失敗，請稍後再試");
+    } finally {
+      setAllExporting(false);
+    }
+  };
+
   return (
     <>
       <Card classNames={{ body: "p-3 sm:p-6" }}>
@@ -234,6 +255,13 @@ export default function OrdersPage() {
                 loading={routesLoading || loading}
               >
                 重新載入
+              </Button>
+              <Button
+                icon={<DownloadOutlined />}
+                loading={allExporting}
+                onClick={exportAll}
+              >
+                匯出所有訂單
               </Button>
               <Button
                 icon={<FileWordOutlined />}

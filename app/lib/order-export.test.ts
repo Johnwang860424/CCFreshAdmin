@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import type { OrderRow } from "@/app/domain/order-assembly";
-import { buildOrdersWorkbook } from "./order-export";
+import { buildAllOrdersWorkbook, buildOrdersWorkbook } from "./order-export";
 
 const order = (overrides: Partial<OrderRow>): OrderRow => ({
   id: 1,
@@ -196,5 +196,104 @@ describe("buildOrdersWorkbook", () => {
     expect(sheet[3][1]).toBe("C");
     expect(sheet[4][1]).toBe("A");
     expect(sheet[5][1]).toBe("D");
+  });
+});
+
+describe("buildAllOrdersWorkbook", () => {
+  const delivery = (overrides: Partial<OrderRow> = {}): OrderRow =>
+    order({
+      deliveryMethod: "delivery",
+      pickupSpotId: null,
+      pickupSpotLabel: null,
+      pickupSpotCity: null,
+      pickupSpotTownship: null,
+      routeId: null,
+      routeName: null,
+      spotCode: null,
+      shippingAddress: "台北市大安區和平東路 1 號",
+      ...overrides,
+    });
+
+  it("單一分頁：依路線排序（一般路線 → 未分路線 → 宅配），各路線之間空一列", () => {
+    const sheets = readBack(
+      buildAllOrdersWorkbook([
+        delivery({ id: 1, customerName: "宅配一", pickupNumber: 7 }),
+        order({ id: 2, customerName: "未分一", routeId: null, routeName: null }),
+        order({ id: 3, customerName: "海線一", routeId: 5, routeName: "海線" }),
+        order({ id: 4, customerName: "山線一", routeId: 2 }),
+        order({ id: 5, customerName: "山線二", routeId: 2 }),
+        order({ id: 6, customerName: "海線二", routeId: 5, routeName: "海線" }),
+      ]),
+    );
+
+    expect([...sheets.keys()]).toEqual(["所有訂單"]);
+    const rows = sheets.get("所有訂單")!;
+
+    expect(rows[0][0]).toBe("聯絡電話");
+    // 山線（route 2）→ 空列 → 海線（route 5）→ 空列 → 未分路線 → 空列 → 宅配
+    expect(rows.map((r) => r[3] ?? "")).toEqual([
+      "客戶姓名",
+      "山線一",
+      "山線二",
+      "",
+      "海線一",
+      "海線二",
+      "",
+      "未分一",
+      "",
+      "宅配一",
+    ]);
+    expect(rows[3]).toEqual([]);
+    expect(rows[6]).toEqual([]);
+    expect(rows[8]).toEqual([]);
+  });
+
+  it("欄位順序為聯絡電話→備註→取貨號→客戶姓名→取貨地點→購買清單→訂單總額（無來源欄）", () => {
+    const rows = readBack(
+      buildAllOrdersWorkbook([
+        order({ note: "備註文字" }),
+        delivery({ id: 2, customerName: "李小華", pickupNumber: 7, phone: null }),
+      ]),
+    ).get("所有訂單")!;
+
+    expect(rows[0]).toEqual([
+      "聯絡電話",
+      "備註",
+      "取貨號",
+      "客戶姓名",
+      "取貨地點",
+      "購買清單",
+      "訂單總額",
+    ]);
+    // 自取：同一頁無縣市分頁，取貨地點帶完整「縣市 鄉鎮」
+    expect(rows[1]).toEqual([
+      "0912345678",
+      "備註文字",
+      "AS5",
+      "王小明",
+      "台中市 西區",
+      "芒果*3",
+      300,
+    ]);
+    // 宅配：取貨地點仍為收件地址；空欄輸出為空
+    expect(rows[3]).toEqual([
+      "",
+      "",
+      "S7",
+      "李小華",
+      "台北市大安區和平東路 1 號",
+      "芒果*3",
+      300,
+    ]);
+  });
+
+  it("取貨點已刪除（無縣市）時退回鄉鎮/空字串，不影響分組", () => {
+    const rows = readBack(
+      buildAllOrdersWorkbook([
+        order({ id: 1, pickupSpotLabel: null, pickupSpotTownship: null }),
+      ]),
+    ).get("所有訂單")!;
+
+    expect(rows[1][4]).toBe(""); // 取貨地點欄
   });
 });
